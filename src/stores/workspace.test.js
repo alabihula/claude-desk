@@ -9,8 +9,13 @@ vi.mock('../services/desktop', () => ({
     sendClaude: vi.fn(),
     interruptClaude: vi.fn(),
     stopClaude: vi.fn(),
+    removeProject: vi.fn(),
+    touchProject: vi.fn(),
+    listConversations: vi.fn(),
     gitStatus: vi.fn(),
     renameConversation: vi.fn(),
+    readProjectFile: vi.fn(),
+    openInEditor: vi.fn(),
   },
 }))
 
@@ -50,6 +55,7 @@ describe('workspace supplemental messages', () => {
     desktop.saveMessage.mockImplementation(async (conversationId, role, content) => ({ id: `message-${++messageId}`, conversationId, role, content }))
     desktop.sendClaude.mockResolvedValue('run-next')
     desktop.interruptClaude.mockResolvedValue()
+    desktop.listConversations.mockResolvedValue([])
     desktop.gitStatus.mockResolvedValue([])
   })
 
@@ -121,5 +127,55 @@ describe('workspace supplemental messages', () => {
       role: 'assistant',
       content: '未完成的回答\n\n> 已根据补充内容中断，并继续处理新要求。',
     })
+  })
+
+  it('opens project files in a Claude Desk workspace tab', async () => {
+    const store = setupStore()
+    store.settings.editor = 'claude-desk'
+    desktop.readProjectFile.mockResolvedValue({
+      path: '/tmp/project/notes.md',
+      name: 'notes.md',
+      content: '# Notes',
+      size: 7,
+    })
+
+    await store.openFile('/tmp/project/notes.md')
+
+    expect(desktop.readProjectFile).toHaveBeenCalledWith('/tmp/project', '/tmp/project/notes.md')
+    expect(store.workspaceView).toBe('file')
+    expect(store.filePreview).toMatchObject({ name: 'notes.md', content: '# Notes', loading: false })
+  })
+
+  it('keeps external editor choices routed through the desktop service', async () => {
+    const store = setupStore()
+    store.settings.editor = 'vscode'
+
+    await store.openFile('/tmp/project/src/main.js', 12)
+
+    expect(desktop.openInEditor).toHaveBeenCalledWith('/tmp/project/src/main.js', 12, 'vscode')
+    expect(desktop.readProjectFile).not.toHaveBeenCalled()
+  })
+
+  it('keeps the current project selected when another project is removed', async () => {
+    const store = setupStore()
+    const otherProject = { id: 'project-2', path: '/tmp/other' }
+    store.projects.push(otherProject)
+
+    await store.removeProject(otherProject)
+
+    expect(desktop.removeProject).toHaveBeenCalledWith('project-2')
+    expect(store.activeProjectId).toBe('project-1')
+    expect(store.activeConversationId).toBe('conversation-1')
+  })
+
+  it('selects the next project after removing the current project', async () => {
+    const store = setupStore()
+    store.projects.push({ id: 'project-2', path: '/tmp/other' })
+
+    await store.removeProject(store.projects[0])
+
+    expect(store.activeProjectId).toBe('project-2')
+    expect(store.activeConversationId).toBeNull()
+    expect(desktop.touchProject).toHaveBeenCalledWith('project-2')
   })
 })

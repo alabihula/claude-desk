@@ -16,6 +16,17 @@ pub struct LocalFile {
     size: u64,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFile {
+    path: String,
+    name: String,
+    content: String,
+    size: u64,
+}
+
+const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
+
 fn attachment_dir(app: &AppHandle, conversation_id: &str) -> Result<PathBuf, String> {
     let path = app
         .path()
@@ -57,7 +68,7 @@ fn resolve_project_file(project_path: &Path, candidate: &Path) -> Result<PathBuf
     };
     let resolved = fs::canonicalize(requested).map_err(|_| "File no longer exists")?;
     if !resolved.starts_with(&project) || !resolved.is_file() {
-        return Err("Only files inside the active project can be downloaded".into());
+        return Err("Only files inside the active project can be accessed".into());
     }
     Ok(resolved)
 }
@@ -179,32 +190,61 @@ pub fn download_file(
 }
 
 #[tauri::command]
+pub fn read_project_file(project_path: String, source_path: String) -> Result<ProjectFile, String> {
+    let path = resolve_project_file(Path::new(&project_path), Path::new(&source_path))?;
+    let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_PREVIEW_BYTES {
+        return Err("File preview is limited to 2 MB".into());
+    }
+    let bytes = fs::read(&path).map_err(|error| format!("Could not read file: {error}"))?;
+    let content =
+        String::from_utf8(bytes).map_err(|_| "Binary files cannot be previewed".to_string())?;
+    Ok(ProjectFile {
+        name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("file")
+            .to_string(),
+        path: path.to_string_lossy().to_string(),
+        content,
+        size: metadata.len(),
+    })
+}
+
+#[tauri::command]
 pub fn open_in_editor(
     path: String,
     line: Option<u32>,
     editor: Option<String>,
 ) -> Result<(), String> {
     let editor = editor.unwrap_or_else(|| "vscode".into());
-    let target = if editor == "system" {
-        path
-    } else {
-        match line {
-            Some(line) => format!("{}:{}", path, line),
-            None => path,
-        }
+    let target = match line {
+        Some(line) => format!("{}:{}", path, line),
+        None => path.clone(),
     };
     let output = if editor == "system" {
-        Command::new("open").arg(target).output()
+        Command::new("open").arg(&path).output()
     } else {
-        let application = if editor == "cursor" {
-            "Cursor"
+        let (application, cli) = if editor == "cursor" {
+            (
+                "Cursor",
+                "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+            )
         } else {
-            "Visual Studio Code"
+            (
+                "Visual Studio Code",
+                "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+            )
         };
-        Command::new("open")
-            .args(["-a", application, "--args", "-g"])
-            .arg(target)
-            .output()
+        if Path::new(cli).is_file() {
+            Command::new(cli).args(["--goto", &target]).output()
+        } else {
+            // Passing the file directly also works when the editor is already running.
+            Command::new("open")
+                .args(["-a", application])
+                .arg(&path)
+                .output()
+        }
     }
     .map_err(|error| format!("Could not open editor: {error}"))?;
     if !output.status.success() {
@@ -236,7 +276,7 @@ pub fn open_terminal(path: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_file, resolve_project_file};
+    use super::{download_file, read_project_file, resolve_project_file};
     use std::{fs, path::Path};
     use uuid::Uuid;
 
@@ -286,6 +326,20 @@ mod tests {
         .is_err());
 
         fs::remove_file(destination).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_a_project_text_file_for_preview() {
+        let root = std::env::temp_dir().join(format!("claude-desk-preview-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("preview.md"), "# Preview").unwrap();
+
+        let file = read_project_file(root.to_string_lossy().to_string(), "preview.md".to_string())
+            .unwrap();
+        assert_eq!(file.name, "preview.md");
+        assert_eq!(file.content, "# Preview");
+
         fs::remove_dir_all(root).unwrap();
     }
 }

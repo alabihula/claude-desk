@@ -17,6 +17,7 @@ const defaultSettings = {
 }
 
 let diffRequestId = 0
+let filePreviewRequestId = 0
 
 function conciseTitle(content) {
   const title = content.replace(/\s+/g, ' ').trim()
@@ -60,7 +61,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     error: '',
     settingsOpen: false,
     permissionsOpen: false,
+    sidebarCollapsed: false,
     previewAttachment: null,
+    filePreview: null,
+    workspaceView: 'conversation',
     diffDrawer: null,
     eventUnlisten: null,
   }),
@@ -139,6 +143,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     async selectProject(id) {
       if (this.activeProjectId === id && this.conversations.length) return
       this.activeProjectId = id
+      this.filePreview = null
+      this.workspaceView = 'conversation'
       await desktop.touchProject(id)
       this.conversations = await desktop.listConversations(id)
       const first = this.conversations[0]
@@ -150,6 +156,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     async removeProject(project) {
       await desktop.removeProject(project.id)
       this.projects = this.projects.filter((item) => item.id !== project.id)
+      if (this.activeProjectId !== project.id) return
       this.activeProjectId = null
       this.activeConversationId = null
       this.conversations = []
@@ -166,6 +173,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async selectConversation(id) {
       this.activeConversationId = id
+      this.workspaceView = 'conversation'
       await desktop.touchConversation(id)
       if (!this.messages[id]) {
         const [messages, attachments] = await Promise.all([desktop.listMessages(id), desktop.listAttachments(id)])
@@ -400,6 +408,36 @@ export const useWorkspaceStore = defineStore('workspace', {
     async openChanges() {
       const file = preferredChange(this.activeChanges)
       if (file) await this.openDiff(file)
+    },
+
+    async openFile(path, line = null) {
+      if (!this.activeProject) return
+      if (this.settings.editor !== 'claude-desk') {
+        try { await desktop.openInEditor(path, line, this.settings.editor) } catch (error) { this.error = String(error) }
+        return
+      }
+      const requestId = ++filePreviewRequestId
+      this.filePreview = {
+        path,
+        name: path.split('/').pop() || 'file',
+        content: '',
+        size: 0,
+        loading: true,
+        error: '',
+        requestId,
+      }
+      this.workspaceView = 'file'
+      try {
+        const file = await desktop.readProjectFile(this.activeProject.path, path)
+        if (this.filePreview?.requestId === requestId) Object.assign(this.filePreview, file, { loading: false })
+      } catch (error) {
+        if (this.filePreview?.requestId === requestId) Object.assign(this.filePreview, { error: String(error), loading: false })
+      }
+    },
+
+    closeFilePreview() {
+      this.filePreview = null
+      this.workspaceView = 'conversation'
     },
 
     async saveAppSettings(settings) {

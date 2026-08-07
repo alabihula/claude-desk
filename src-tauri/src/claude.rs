@@ -61,8 +61,10 @@ pub struct ClaudeHealth {
 
 async fn login_environment() -> HashMap<String, String> {
     let mut environment = std::env::vars().collect::<HashMap<_, _>>();
+    // GUI apps do not inherit terminal startup files. Interactive mode also
+    // loads .zshrc, where tools such as NVM commonly add Claude to PATH.
     let output = Command::new("/bin/zsh")
-        .args(["-l", "-c", "env -0"])
+        .args(["-l", "-i", "-c", "command /usr/bin/env -0"])
         .output()
         .await;
     if let Ok(output) = output {

@@ -122,7 +122,7 @@ async function save() {
           <div class="settings-heading"><h3>Claude Desk</h3><p>Local application preferences.</p></div>
           <div class="two-column">
             <label>Appearance<select v-model="form.theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-            <label>Open code links in <span>Used when you click a file path in Claude's response.</span><select v-model="form.editor"><option value="vscode">VS Code</option><option value="cursor">Cursor</option><option value="system">System Default</option></select></label>
+            <label>Open code links in <span>Used when you click a file path in Claude's response.</span><select v-model="form.editor"><option value="claude-desk">Claude Desk</option><option value="vscode">VS Code</option><option value="cursor">Cursor</option><option value="system">System Default</option></select></label>
           </div>
           <button class="settings-link" @click="store.settingsOpen = false; store.permissionsOpen = true">File and command access is managed in <strong>Permissions</strong>.</button>
           <div v-if="store.health" class="health-card" :class="{ error: !store.health.available }">

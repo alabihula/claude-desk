@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractLocalFileCandidates, formatFileSize } from './localFiles'
+import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from './localFiles'
 
 describe('local file references', () => {
   it('extracts generated files from inline code, links, and bare absolute paths', () => {
@@ -26,5 +26,13 @@ describe('local file references', () => {
     expect(formatFileSize(42)).toBe('42 B')
     expect(formatFileSize(1536)).toBe('1.5 KB')
     expect(formatFileSize(2 * 1024 ** 2)).toBe('2.0 MB')
+  })
+
+  it('extracts project file references without matching inside absolute paths', () => {
+    const content = '`src/main.js:12` and components/Button.vue, not `/Users/x/claude-app/report.md`'
+    expect(extractProjectFileReferences(content)).toEqual([
+      { path: 'src/main.js', line: 12 },
+      { path: 'components/Button.vue', line: null },
+    ])
   })
 })

@@ -18,12 +18,14 @@ let unlistenDrag
 function shortcuts(event) {
   if (event.metaKey && event.key.toLowerCase() === 'n') { event.preventDefault(); store.newConversation() }
   if (event.metaKey && event.key.toLowerCase() === 'k') { event.preventDefault(); window.dispatchEvent(new Event('claude-desk-focus')) }
+  if (event.metaKey && event.key.toLowerCase() === 'b') { event.preventDefault(); store.sidebarCollapsed = !store.sidebarCollapsed }
   if (event.metaKey && event.key === ',') { event.preventDefault(); store.settingsOpen = true }
   if (event.key === 'Escape') {
     if (store.previewAttachment) store.previewAttachment = null
     else if (store.permissionsOpen) store.permissionsOpen = false
     else if (store.diffDrawer) store.diffDrawer = null
     else if (store.settingsOpen) store.settingsOpen = false
+    else if (store.workspaceView === 'file') store.closeFilePreview()
     else if (store.activeRun) store.stopClaude()
   }
 }

@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { downloadDir, join } from '@tauri-apps/api/path'
 import { save } from '@tauri-apps/plugin-dialog'
 import { Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
 import { desktop } from '../../services/desktop'
-import { extractLocalFileCandidates, formatFileSize } from '../../services/localFiles'
+import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from '../../services/localFiles'
 import { codeCopyPayload, createMessageMarkdown, writeClipboardText } from '../../services/markdown'
 import { useWorkspaceStore } from '../../stores/workspace'
 
@@ -28,8 +29,7 @@ const rendered = computed(() => {
   return markdown.render(content.trim())
 })
 const fileRefs = computed(() => {
-  const matches = [...(props.message.content || '').matchAll(/\b((?:src|app|packages|tests?|components|lib)\/[\w@./-]+\.[A-Za-z0-9]+)(?::(\d+))?/g)]
-  return [...new Map(matches.map((match) => [`${match[1]}:${match[2] || ''}`, { path: match[1], line: match[2] ? Number(match[2]) : null }])).values()]
+  return extractProjectFileReferences(props.message.content)
 })
 
 watch(
@@ -48,9 +48,13 @@ watch(
   { immediate: true },
 )
 
-function openFile(file) {
+async function openFile(file) {
   if (!store.activeProject) return
-  desktop.openInEditor(`${store.activeProject.path}/${file.path}`, file.line, store.settings.editor)
+  await store.openFile(`${store.activeProject.path}/${file.path}`, file.line)
+}
+
+async function openDownloadableFile(file) {
+  await store.openFile(file.path)
 }
 
 function openAttachment(attachment) {
@@ -79,10 +83,12 @@ async function copyCode(event) {
 
 async function downloadLocalFile(file) {
   if (!store.activeProject || downloadStatus.value[file.path] === 'saving') return
-  const destination = await save({ title: `保存 ${file.name}`, defaultPath: file.name })
-  if (!destination) return
-  downloadStatus.value = { ...downloadStatus.value, [file.path]: 'saving' }
   try {
+    let defaultPath = file.name
+    try { defaultPath = await join(await downloadDir(), file.name) } catch { /* Fall back to the dialog's last directory. */ }
+    const destination = await save({ title: `保存 ${file.name}`, defaultPath })
+    if (!destination) return
+    downloadStatus.value = { ...downloadStatus.value, [file.path]: 'saving' }
     await desktop.downloadFile(store.activeProject.path, file.path, destination)
     downloadStatus.value = { ...downloadStatus.value, [file.path]: 'saved' }
     window.clearTimeout(downloadTimers.get(file.path))
@@ -130,18 +136,19 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div v-if="downloadableFiles.length" class="downloadable-files">
-      <button
+      <div
         v-for="file in downloadableFiles"
         :key="file.path"
         class="download-file-card"
-        :title="file.path"
-        :disabled="downloadStatus[file.path] === 'saving'"
-        @click="downloadLocalFile(file)"
       >
-        <span class="download-file-icon"><FileText :size="18" /></span>
-        <span class="download-file-info"><strong>{{ file.name }}</strong><small>{{ formatFileSize(file.size) }}</small></span>
-        <span class="download-file-action"><Download :size="14" />{{ downloadStatus[file.path] === 'saving' ? '保存中…' : downloadStatus[file.path] === 'saved' ? '已保存' : '下载' }}</span>
-      </button>
+        <button class="download-file-open" :title="file.path" @click="openDownloadableFile(file)">
+          <span class="download-file-icon"><FileText :size="18" /></span>
+          <span class="download-file-info"><strong>{{ file.name }}</strong><small>{{ formatFileSize(file.size) }}</small></span>
+        </button>
+        <button class="download-file-action" :title="`下载 ${file.path}`" :disabled="downloadStatus[file.path] === 'saving'" @click="downloadLocalFile(file)">
+          <Download :size="14" />{{ downloadStatus[file.path] === 'saving' ? '保存中…' : downloadStatus[file.path] === 'saved' ? '已保存' : '下载' }}
+        </button>
+      </div>
     </div>
   </article>
 </template>

@@ -38,6 +38,14 @@ export function extractLocalFileCandidates(content = '') {
   return candidates.slice(0, 20)
 }
 
+export function extractProjectFileReferences(content = '') {
+  const matches = content.matchAll(/(?:^|[^\w@./-])((?:src|app|packages|tests?|components|lib)\/[\w@./-]+\.[A-Za-z0-9]+)(?::(\d+))?/g)
+  return [...new Map([...matches].map((match) => [
+    `${match[1]}:${match[2] || ''}`,
+    { path: match[1], line: match[2] ? Number(match[2]) : null },
+  ])).values()]
+}
+
 export function formatFileSize(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return ''
   if (bytes < 1024) return `${bytes} B`

@@ -22,6 +22,7 @@ export const desktop = {
   saveClipboardImage: (conversationId, bytes, extension) => invoke('save_clipboard_image', { conversationId, bytes, extension }),
   resolveLocalFiles: (projectPath, candidates) => invoke('resolve_local_files', { projectPath, candidates }),
   downloadFile: (projectPath, sourcePath, destinationPath) => invoke('download_file', { projectPath, sourcePath, destinationPath }),
+  readProjectFile: (projectPath, sourcePath) => invoke('read_project_file', { projectPath, sourcePath }),
   openInEditor: (path, line, editor) => invoke('open_in_editor', { path, line, editor }),
   revealPath: (path) => invoke('reveal_path', { path }),
   openTerminal: (path) => invoke('open_terminal', { path }),

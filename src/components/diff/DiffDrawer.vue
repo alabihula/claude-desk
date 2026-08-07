@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
-import { desktop } from '../../services/desktop'
 import { changeStatusLabel } from '../../services/changes'
 
 const store = useWorkspaceStore()
@@ -13,9 +12,11 @@ function lineKind(line) {
   if (line.startsWith('@@')) return 'hunk'
   return ''
 }
-function openFile() {
+async function openFile() {
   const file = store.diffDrawer?.file
-  if (file) desktop.openInEditor(`${store.activeProject.path}/${file.path}`, null, store.settings.editor)
+  if (!file) return
+  await store.openFile(`${store.activeProject.path}/${file.path}`)
+  if (store.settings.editor === 'claude-desk') store.diffDrawer = null
 }
 </script>
 

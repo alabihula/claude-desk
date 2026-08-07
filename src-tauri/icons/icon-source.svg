@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="warm" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E88968"/>
+      <stop offset="1" stop-color="#C4533E"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="300" y1="306" x2="704" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF9EE"/>
+      <stop offset="1" stop-color="#F3E8D7"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#warm)"/>
+
+  <path
+    d="M190 310c0-66 54-120 120-120h404c66 0 120 54 120 120v318c0 66-54 120-120 120H470L326 858c-24 18-59 1-59-29v-89c-46-17-77-61-77-112V310z"
+    fill="url(#paper)"
+  />
+
+  <path
+    d="M512 305l32 128 104-81-69 112 133-10-124 50 118 63-131-24 56 121-94-93-16 131-17-131-94 93 56-121-131 24 118-63-124-50 133 10-69-112 104 81z"
+    fill="url(#warm)"
+  />
+  <circle cx="737" cy="650" r="27" fill="#713B31" opacity=".78"/>
+  <circle cx="797" cy="650" r="16" fill="#713B31" opacity=".42"/>
+</svg>

@@ -27,5 +27,6 @@ export const desktop = {
   gitDiff: (projectPath, path) => invoke('git_diff', { projectPath, path }),
   checkClaude: (command, env) => invoke('check_claude', { command, env }),
   sendClaude: (request) => invoke('send_claude', { request }),
+  interruptClaude: (conversationId) => invoke('interrupt_claude', { conversationId }),
   stopClaude: (conversationId) => invoke('stop_claude', { conversationId }),
 }

@@ -4,12 +4,13 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Command,
+    process::{ChildStdin, Command},
+    sync::Mutex as AsyncMutex,
 };
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ pub struct ClaudeProcesses {
 struct RunningProcess {
     pid: u32,
     run_id: String,
+    input: Arc<AsyncMutex<Option<ChildStdin>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +146,30 @@ fn emit(app: &AppHandle, conversation_id: &str, run_id: &str, kind: &str, data: 
     );
 }
 
+async fn write_input(
+    input: &Arc<AsyncMutex<Option<ChildStdin>>>,
+    message: &Value,
+) -> Result<(), String> {
+    let mut guard = input.lock().await;
+    let stdin = guard
+        .as_mut()
+        .ok_or("Claude is no longer accepting input")?;
+    let mut line = serde_json::to_vec(message).map_err(|error| error.to_string())?;
+    line.push(b'\n');
+    stdin
+        .write_all(&line)
+        .await
+        .map_err(|error| error.to_string())?;
+    stdin.flush().await.map_err(|error| error.to_string())
+}
+
+async fn close_input(input: &Arc<AsyncMutex<Option<ChildStdin>>>) {
+    let mut guard = input.lock().await;
+    if let Some(mut stdin) = guard.take() {
+        let _ = stdin.shutdown().await;
+    }
+}
+
 #[tauri::command]
 pub async fn send_claude(
     app: AppHandle,
@@ -200,11 +226,12 @@ pub async fn send_claude(
         .args([
             "--print",
             "--input-format",
-            "text",
+            "stream-json",
             "--output-format",
             "stream-json",
             "--verbose",
             "--include-partial-messages",
+            "--replay-user-messages",
         ]);
     // Attachments are app-owned copies outside the project working directory.
     let attachment_root = app
@@ -239,13 +266,29 @@ pub async fn send_claude(
         .id()
         .ok_or("Claude process did not expose a process id")?;
     let run_id = Uuid::new_v4().to_string();
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(request.prompt.as_bytes())
-            .await
-            .map_err(|error| error.to_string())?;
-        stdin.shutdown().await.map_err(|error| error.to_string())?;
-    }
+    let input = Arc::new(AsyncMutex::new(Some(
+        child.stdin.take().ok_or("Claude stdin is unavailable")?,
+    )));
+    // Initialize the bidirectional protocol before sending the first user turn.
+    write_input(
+        &input,
+        &serde_json::json!({
+            "type": "control_request",
+            "request_id": Uuid::new_v4().to_string(),
+            "request": { "subtype": "initialize", "hooks": {}, "sdkMcpServers": [] }
+        }),
+    )
+    .await?;
+    write_input(
+        &input,
+        &serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": request.prompt },
+            "parent_tool_use_id": null,
+            "uuid": Uuid::new_v4().to_string()
+        }),
+    )
+    .await?;
     let stdout = child.stdout.take().ok_or("Claude stdout is unavailable")?;
     let stderr = child.stderr.take().ok_or("Claude stderr is unavailable")?;
     state
@@ -257,12 +300,14 @@ pub async fn send_claude(
             RunningProcess {
                 pid,
                 run_id: run_id.clone(),
+                input: input.clone(),
             },
         );
 
     let app_for_task = app.clone();
     let conversation_id = request.conversation_id.clone();
     let run_for_task = run_id.clone();
+    let input_for_task = input.clone();
     tauri::async_runtime::spawn(async move {
         emit(
             &app_for_task,
@@ -280,7 +325,15 @@ pub async fn send_claude(
                 line = stdout_lines.next_line(), if !stdout_done => match line {
                     Ok(Some(line)) => {
                         let data = serde_json::from_str(&line).unwrap_or_else(|_| serde_json::json!({ "text": line }));
-                        emit(&app_for_task, &conversation_id, &run_for_task, "stream", data);
+                        let is_result = data.get("type").and_then(Value::as_str) == Some("result");
+                        // Successful control responses can contain a large capability payload
+                        // that the UI does not render. Only forward normal Claude events.
+                        if data.get("type").and_then(Value::as_str) != Some("control_response") {
+                            emit(&app_for_task, &conversation_id, &run_for_task, "stream", data);
+                        }
+                        if is_result {
+                            close_input(&input_for_task).await;
+                        }
                     }
                     Ok(None) => stdout_done = true,
                     Err(error) => { stdout_done = true; emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error.to_string() })); }
@@ -316,6 +369,32 @@ pub async fn send_claude(
         }
     });
     Ok(run_id)
+}
+
+#[tauri::command]
+pub async fn interrupt_claude(
+    state: State<'_, ClaudeProcesses>,
+    conversation_id: String,
+) -> Result<(), String> {
+    let input = {
+        let running = state
+            .running
+            .lock()
+            .map_err(|_| "Claude process state is unavailable")?;
+        running
+            .get(&conversation_id)
+            .map(|process| process.input.clone())
+            .ok_or("Claude is no longer working in this conversation")?
+    };
+    write_input(
+        &input,
+        &serde_json::json!({
+            "type": "control_request",
+            "request_id": Uuid::new_v4().to_string(),
+            "request": { "subtype": "interrupt" }
+        }),
+    )
+    .await
 }
 
 #[tauri::command]

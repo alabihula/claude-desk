@@ -4,6 +4,7 @@ import { desktop } from '../services/desktop'
 import { attachmentPrompt } from '../services/attachments'
 import { preferredChange } from '../services/changes'
 import { mergeActivity, parseClaudeEvent } from '../services/claude/parser'
+import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 
 const defaultSettings = {
@@ -53,6 +54,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     contextStats: {},
     health: null,
     runs: {},
+    queuedMessages: {},
     changes: {},
     loading: true,
     error: '',
@@ -71,6 +73,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       return Object.fromEntries(this.activeMessages.map((message) => [message.id, state.attachmentsByMessage[message.id] || []]))
     },
     activeRun(state) { return state.runs[state.activeConversationId] || null },
+    activeQueuedMessages(state) { return state.queuedMessages[state.activeConversationId] || [] },
     activeContext(state) {
       const env = this.claudeSettings?.env || {}
       const current = state.runs[state.activeConversationId]?.context || state.contextStats[state.activeConversationId] || {}
@@ -185,6 +188,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.conversations = this.conversations.filter((item) => item.id !== conversation.id)
       for (const message of this.messages[conversation.id] || []) delete this.attachmentsByMessage[message.id]
       delete this.messages[conversation.id]
+      delete this.queuedMessages[conversation.id]
       if (this.activeConversationId === conversation.id) {
         this.activeConversationId = null
         if (this.conversations[0]) await this.selectConversation(this.conversations[0].id)
@@ -194,39 +198,102 @@ export const useWorkspaceStore = defineStore('workspace', {
     async sendMessage(content, attachments = []) {
       const conversation = this.activeConversation
       const project = this.activeProject
-      if (!conversation || !project || this.runs[conversation.id]) return
       const cleanContent = content.trim()
-      if (!cleanContent && !attachments.length) return
-      const previousMessages = this.messages[conversation.id] || []
+      if (!conversation || !project || (!cleanContent && !attachments.length)) return
+      const queued = createQueuedMessage({
+        id: crypto.randomUUID(),
+        conversation,
+        project,
+        content: cleanContent,
+        attachments,
+        createdAt: new Date().toISOString(),
+      })
+      if (this.runs[conversation.id] || this.queuedMessages[conversation.id]?.length) {
+        ;(this.queuedMessages[conversation.id] ||= []).push(queued)
+        if (!this.runs[conversation.id]) await this.dispatchNextQueued(conversation.id)
+        return
+      }
+      await this.dispatchMessage(queued)
+    },
+
+    async dispatchMessage(queued) {
+      if (!queued || this.runs[queued.conversationId]) return
+      const previousMessages = this.messages[queued.conversationId] || []
       const hasPreviousUserMessage = previousMessages.some((message) => message.role === 'user')
-      const userMessage = await desktop.saveMessage(conversation.id, 'user', cleanContent || '请查看附件。')
-      if (attachments.length) {
-        await desktop.linkAttachments(userMessage.id, attachments.map((item) => item.id))
-        this.attachmentsByMessage[userMessage.id] = attachments.map((item) => ({ ...item, messageId: userMessage.id }))
+      const content = queued.content || '请查看附件。'
+      const userMessage = await desktop.saveMessage(queued.conversationId, 'user', content)
+      if (queued.attachments.length) {
+        await desktop.linkAttachments(userMessage.id, queued.attachments.map((item) => item.id))
+        this.attachmentsByMessage[userMessage.id] = queued.attachments.map((item) => ({ ...item, messageId: userMessage.id }))
       }
       previousMessages.push(userMessage)
-      if (conversation.title === 'New Conversation') await this.renameConversation(conversation, conciseTitle(cleanContent || attachments[0]?.name || 'New Conversation'))
+      this.messages[queued.conversationId] = previousMessages
+      const conversation = this.conversations.find((item) => item.id === queued.conversationId)
+      if (conversation?.title === 'New Conversation') {
+        await this.renameConversation(conversation, conciseTitle(queued.content || queued.attachments[0]?.name || 'New Conversation'))
+      }
 
-      this.runs[conversation.id] = newRun('chat', this.contextStats[conversation.id])
+      this.runs[queued.conversationId] = newRun('chat', this.contextStats[queued.conversationId])
       try {
         const runId = await desktop.sendClaude({
-          conversationId: conversation.id,
-          sessionId: conversation.claudeSessionId,
-          projectPath: project.path,
-          prompt: attachmentPrompt(cleanContent || '请查看附件。', attachments),
+          conversationId: queued.conversationId,
+          sessionId: queued.sessionId,
+          projectPath: queued.projectPath,
+          prompt: attachmentPrompt(content, queued.attachments),
           resume: hasPreviousUserMessage,
           command: this.settings.command,
           args: this.settings.args,
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
         })
-        if (this.runs[conversation.id]) this.runs[conversation.id].runId = runId
+        if (this.runs[queued.conversationId]) this.runs[queued.conversationId].runId = runId
       } catch (error) {
-        this.runs[conversation.id].status = 'error'
-        this.runs[conversation.id].error = String(error)
+        this.runs[queued.conversationId].status = 'error'
+        this.runs[queued.conversationId].error = String(error)
         this.error = String(error)
-        await this.finalizeRun(conversation.id)
+        await this.finalizeRun(queued.conversationId)
+        delete this.runs[queued.conversationId]
       }
+    },
+
+    removeQueuedMessage(conversationId, messageId) {
+      const messages = this.queuedMessages[conversationId] || []
+      this.queuedMessages[conversationId] = messages.filter((item) => item.id !== messageId || item.status === 'steering')
+    },
+
+    async sendQueuedMessageNow(conversationId, messageId) {
+      if (this.runs[conversationId]) return this.steerQueuedMessage(conversationId, messageId)
+      this.queuedMessages[conversationId] = prioritizeQueuedMessage(this.queuedMessages[conversationId] || [], messageId)
+      await this.dispatchNextQueued(conversationId)
+    },
+
+    async steerQueuedMessage(conversationId, messageId) {
+      const run = this.runs[conversationId]
+      if (!run || run.status === 'steering' || run.status === 'stopping') return
+      const messages = this.queuedMessages[conversationId] || []
+      if (!messages.some((item) => item.id === messageId)) return
+      const previousStatus = run.status
+      this.queuedMessages[conversationId] = prioritizeQueuedMessage(messages, messageId)
+      run.status = 'steering'
+      try {
+        await desktop.interruptClaude(conversationId)
+      } catch (error) {
+        this.queuedMessages[conversationId] = resetQueuedMessage(this.queuedMessages[conversationId], messageId)
+        run.status = previousStatus
+        // If the result won the race, normal queue dispatch will take over on exit.
+        if (previousStatus !== 'complete') {
+          run.error = String(error)
+          this.error = String(error)
+        }
+      }
+    },
+
+    async dispatchNextQueued(conversationId) {
+      if (this.runs[conversationId]) return
+      const [next, rest] = takeNextQueuedMessage(this.queuedMessages[conversationId] || [])
+      if (!next) return
+      this.queuedMessages[conversationId] = rest
+      await this.dispatchMessage(next)
     },
 
     async stopClaude(conversationId = this.activeConversationId) {
@@ -238,11 +305,13 @@ export const useWorkspaceStore = defineStore('workspace', {
     handleClaudeEvent(payload) {
       const run = this.runs[payload.conversationId]
       if (!run || (run.runId && run.runId !== payload.runId)) return
-      if (payload.kind === 'started') run.status = 'running'
+      if (payload.kind === 'started' && run.status === 'starting') run.status = 'running'
       if (payload.kind === 'stderr') run.error = payload.data?.message || ''
       if (payload.kind === 'error') {
-        run.status = 'error'
-        run.error = payload.data?.message || 'Claude stopped unexpectedly.'
+        if (run.status !== 'steering' && run.status !== 'stopping') {
+          run.status = 'error'
+          run.error = payload.data?.message || 'Claude stopped unexpectedly.'
+        }
       }
       if (payload.kind === 'stream') {
         for (const event of parseClaudeEvent(payload.data)) {
@@ -260,18 +329,26 @@ export const useWorkspaceStore = defineStore('workspace', {
             if (event.contextWindow) run.context.window = event.contextWindow
             if (event.permissionDenials.length) run.permissionDenied = true
             if (event.error) {
-              if (run.status !== 'stopping') { run.status = 'error'; run.error = event.errorMessage }
+              if (run.status !== 'stopping' && run.status !== 'steering') { run.status = 'error'; run.error = event.errorMessage }
             } else run.status = 'complete'
           }
         }
       }
       if (payload.kind === 'exit') {
-        if (!payload.data?.success && run.status !== 'stopping' && run.status !== 'error') {
+        const shouldContinue = run.status === 'complete' || run.status === 'steering'
+        if (run.status === 'steering') run.status = 'interrupted'
+        else if (!payload.data?.success && run.status !== 'stopping' && run.status !== 'error') {
           run.status = 'error'
           run.error ||= 'Claude exited before completing the response.'
         } else if (run.status !== 'error') run.status = run.status === 'stopping' ? 'stopped' : 'complete'
-        this.finalizeRun(payload.conversationId)
+        this.finishRun(payload.conversationId, shouldContinue)
       }
+    },
+
+    async finishRun(conversationId, shouldContinue) {
+      await this.finalizeRun(conversationId)
+      delete this.runs[conversationId]
+      if (shouldContinue) await this.dispatchNextQueued(conversationId)
     },
 
     async finalizeRun(conversationId) {
@@ -288,7 +365,10 @@ export const useWorkspaceStore = defineStore('workspace', {
           ;(this.messages[conversationId] ||= []).push(message)
         } catch (error) { run.error = String(error) }
       } else {
-        const content = run.content.trim() || (run.status === 'stopped' ? '已停止。' : '')
+        const partial = run.content.trim()
+        const content = run.status === 'interrupted' && partial
+          ? `${partial}\n\n> 已根据补充内容中断，并继续处理新要求。`
+          : partial || (run.status === 'stopped' ? '已停止。' : '')
         if (content) {
           try {
             const message = await desktop.saveMessage(conversationId, 'assistant', content)
@@ -298,7 +378,6 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
       }
       await this.refreshChanges()
-      window.setTimeout(() => { if (this.runs[conversationId]?.finalized) delete this.runs[conversationId] }, 500)
     },
 
     async refreshChanges() {
@@ -372,6 +451,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.runs[conversation.id].error = String(error)
         this.error = String(error)
         await this.finalizeRun(conversation.id)
+        delete this.runs[conversation.id]
       }
     },
 

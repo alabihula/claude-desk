@@ -44,6 +44,7 @@ pub fn run() {
             git::git_diff,
             claude::check_claude,
             claude::send_claude,
+            claude::interrupt_claude,
             claude::stop_claude,
         ])
         .run(tauri::generate_context!())

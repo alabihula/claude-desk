@@ -157,6 +157,21 @@ button:disabled { cursor: default; opacity: .45; }
 .composer-hint { margin-left: auto; color: var(--text-faint); font-size: 10px; }
 .send-button { width: 31px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; background: var(--accent); color: white; }
 .send-button:hover { background: var(--accent-strong); }.stop-button { background: var(--text); color: var(--app-bg); }
+.queued-messages { margin: -1px -1px 9px; padding: 9px; border: 1px solid var(--border-soft); border-radius: 10px; background: color-mix(in srgb, var(--app-bg) 72%, var(--surface)); }
+.queued-messages > header { padding: 0 2px 7px; display: flex; align-items: center; gap: 7px; }
+.queued-messages > header strong { font-size: 10px; letter-spacing: .02em; }
+.queued-messages > header span { color: var(--text-faint); font-size: 9px; }
+.queued-message-list { display: grid; gap: 5px; }
+.queued-message-list article { min-height: 38px; padding: 5px 5px 5px 7px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
+.queued-message-list article.steering { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface)); }
+.queue-index { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: var(--surface-hover); color: var(--text-faint); font-size: 9px; }
+.queue-content { min-width: 0; flex: 1; }
+.queue-content p { margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.queue-content small { margin-top: 2px; display: flex; align-items: center; gap: 3px; color: var(--text-faint); font-size: 9px; }
+.queue-activate { height: 27px; padding: 0 8px; flex: 0 0 auto; display: flex; align-items: center; gap: 4px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-strong); font-size: 10px; font-weight: 600; }
+.queue-activate:hover:not(:disabled) { background: var(--accent); color: white; }
+.queue-remove { width: 27px; height: 27px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 6px; background: transparent; color: var(--text-faint); }
+.queue-remove:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
 .attachment-strip { display: flex; gap: 8px; padding: 2px 3px 9px; overflow-x: auto; }
 .attachment-card { position: relative; width: 108px; height: 70px; flex: 0 0 auto; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--app-bg); }
 .attachment-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .75; }.attachment-card > span { position: relative; z-index: 1; padding: 4px 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; background: color-mix(in srgb, var(--surface) 88%, transparent); font-size: 10px; }

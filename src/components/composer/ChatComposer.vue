@@ -1,6 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowUp, File, Image, Paperclip, Square, X } from 'lucide-vue-next'
+import { ArrowUp, File, Paperclip, Square, X } from 'lucide-vue-next'
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { clipboardImageFromEvent } from '../../services/attachments'
@@ -8,6 +8,7 @@ import { shouldSubmitComposer } from '../../services/composerKeyboard'
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
+import QueuedMessages from './QueuedMessages.vue'
 
 const store = useWorkspaceStore()
 const text = ref('')
@@ -39,7 +40,6 @@ async function onPaste(event) {
 }
 
 async function send() {
-  if (store.activeRun) { await store.stopClaude(); return }
   if (!text.value.trim() && !attachments.value.length) return
   const outgoing = attachments.value
   const content = text.value
@@ -60,6 +60,12 @@ function compositionEnd() {
 
 function focus() { input.value?.focus() }
 function dropped(event) { addPaths(event.detail) }
+function activateQueued(messageId) {
+  if (store.activeConversationId) store.sendQueuedMessageNow(store.activeConversationId, messageId)
+}
+function removeQueued(messageId) {
+  if (store.activeConversationId) store.removeQueuedMessage(store.activeConversationId, messageId)
+}
 onMounted(() => { window.addEventListener('claude-desk-drop', dropped); window.addEventListener('claude-desk-focus', focus) })
 onBeforeUnmount(() => { window.removeEventListener('claude-desk-drop', dropped); window.removeEventListener('claude-desk-focus', focus) })
 </script>
@@ -67,6 +73,12 @@ onBeforeUnmount(() => { window.removeEventListener('claude-desk-drop', dropped);
 <template>
   <div class="composer-wrap">
     <div class="composer" :class="{ busy: store.activeRun }">
+      <QueuedMessages
+        :messages="store.activeQueuedMessages"
+        :running="Boolean(store.activeRun)"
+        @activate="activateQueued"
+        @remove="removeQueued"
+      />
       <div v-if="attachments.length" class="attachment-strip">
         <div v-for="(attachment, index) in attachments" :key="attachment.id" class="attachment-card">
           <img v-if="attachment.kind === 'image'" :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
@@ -79,21 +91,20 @@ onBeforeUnmount(() => { window.removeEventListener('claude-desk-drop', dropped);
         ref="input"
         v-model="text"
         rows="1"
-        :placeholder="store.activeRun ? 'Claude is working…' : 'Ask Claude…'"
-        :disabled="Boolean(store.activeRun)"
+        :placeholder="store.activeRun ? '补充内容会先加入待处理队列…' : 'Ask Claude…'"
         @keydown="keydown"
         @compositionstart="compositionStart"
         @compositionend="compositionEnd"
         @paste="onPaste"
       ></textarea>
       <div class="composer-actions">
-        <button class="attach-button" :disabled="adding || Boolean(store.activeRun)" title="Attach files" @click="chooseFiles">
+        <button class="attach-button" :disabled="adding" title="Attach files" @click="chooseFiles">
           <Paperclip :size="17" /> <span>{{ adding ? 'Adding…' : 'Attach' }}</span>
         </button>
         <ContextMeter />
-        <span class="composer-hint">Enter to send · Shift Enter for new line</span>
+        <span class="composer-hint">{{ store.activeRun ? 'Enter 加入队列' : 'Enter 发送' }} · Shift Enter 换行</span>
         <button v-if="store.activeRun" class="send-button stop-button" title="Stop Claude" @click="store.stopClaude()"><Square :size="13" fill="currentColor" /></button>
-        <button v-else class="send-button" :disabled="!text.trim() && !attachments.length" title="Send" @click="send"><ArrowUp :size="18" /></button>
+        <button class="send-button" :disabled="!text.trim() && !attachments.length" :title="store.activeRun ? '加入待处理队列' : '发送'" @click="send"><ArrowUp :size="18" /></button>
       </div>
     </div>
   </div>

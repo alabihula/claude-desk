@@ -18,6 +18,7 @@ const defaultSettings = {
 
 let diffRequestId = 0
 let filePreviewRequestId = 0
+let changesRequestId = 0
 
 function conciseTitle(content) {
   const title = content.replace(/\s+/g, ' ').trim()
@@ -389,8 +390,13 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async refreshChanges() {
-      if (!this.activeProject) return
-      this.changes[this.activeProjectId] = await desktop.gitStatus(this.activeProject.path)
+      const project = this.activeProject
+      if (!project) return
+      const requestId = ++changesRequestId
+      const changes = await desktop.gitStatus(project.path)
+      if (requestId !== changesRequestId || this.activeProjectId !== project.id) return
+      this.changes[project.id] = changes
+      if (this.diffDrawer && !changes.some((file) => file.path === this.diffDrawer.file.path)) this.diffDrawer = null
     },
 
     async openDiff(file) {

@@ -1,5 +1,5 @@
 <script setup>
-import { FileCode2, MessageSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Terminal, X } from 'lucide-vue-next'
+import { FileCode2, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Terminal, X } from 'lucide-vue-next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useWorkspaceStore } from '../stores/workspace'
 import { desktop } from '../services/desktop'
@@ -34,7 +34,6 @@ function dragWindow(event) {
         <ChangesButton />
         <button class="text-button" @click="store.newConversation"><Plus :size="15" /> New chat</button>
         <button class="icon-button" title="Open Terminal" @click="desktop.openTerminal(store.activeProject.path)"><Terminal :size="17" /></button>
-        <button class="icon-button" title="Reveal project" @click="desktop.revealPath(store.activeProject.path)"><MoreHorizontal :size="18" /></button>
       </div>
     </header>
 

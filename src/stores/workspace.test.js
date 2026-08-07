@@ -178,4 +178,17 @@ describe('workspace supplemental messages', () => {
     expect(store.activeConversationId).toBeNull()
     expect(desktop.touchProject).toHaveBeenCalledWith('project-2')
   })
+
+  it('clears committed changes and closes a stale diff preview', async () => {
+    const store = setupStore()
+    store.changes['project-1'] = [{ path: 'src/old.js', status: 'modified' }]
+    store.diffDrawer = { file: { path: 'src/old.js', status: 'modified' }, content: 'old diff' }
+    desktop.gitStatus.mockResolvedValue([])
+
+    await store.refreshChanges()
+
+    expect(desktop.gitStatus).toHaveBeenCalledWith('/tmp/project')
+    expect(store.activeChanges).toEqual([])
+    expect(store.diffDrawer).toBeNull()
+  })
 })

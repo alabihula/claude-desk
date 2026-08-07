@@ -1,10 +1,11 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowUp, File, Paperclip, Square, X } from 'lucide-vue-next'
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { clipboardImageFromEvent } from '../../services/attachments'
 import { shouldSubmitComposer } from '../../services/composerKeyboard'
+import { resizeComposerTextarea } from '../../services/composerTextarea'
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
@@ -59,6 +60,7 @@ function compositionEnd() {
 }
 
 function focus() { input.value?.focus() }
+function resizeInput() { resizeComposerTextarea(input.value) }
 function dropped(event) { addPaths(event.detail) }
 function activateQueued(messageId) {
   if (store.activeConversationId) store.sendQueuedMessageNow(store.activeConversationId, messageId)
@@ -66,8 +68,18 @@ function activateQueued(messageId) {
 function removeQueued(messageId) {
   if (store.activeConversationId) store.removeQueuedMessage(store.activeConversationId, messageId)
 }
-onMounted(() => { window.addEventListener('claude-desk-drop', dropped); window.addEventListener('claude-desk-focus', focus) })
-onBeforeUnmount(() => { window.removeEventListener('claude-desk-drop', dropped); window.removeEventListener('claude-desk-focus', focus) })
+watch(text, () => nextTick(resizeInput))
+onMounted(() => {
+  window.addEventListener('claude-desk-drop', dropped)
+  window.addEventListener('claude-desk-focus', focus)
+  window.addEventListener('resize', resizeInput)
+  resizeInput()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('claude-desk-drop', dropped)
+  window.removeEventListener('claude-desk-focus', focus)
+  window.removeEventListener('resize', resizeInput)
+})
 </script>
 
 <template>

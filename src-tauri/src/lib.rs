@@ -37,6 +37,8 @@ pub fn run() {
             config::save_claude_settings,
             files::copy_attachment,
             files::save_clipboard_image,
+            files::resolve_local_files,
+            files::download_file,
             files::open_in_editor,
             files::reveal_path,
             files::open_terminal,

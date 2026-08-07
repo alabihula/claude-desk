@@ -120,6 +120,12 @@ button:disabled { cursor: default; opacity: .45; }
 .message-image:hover { border-color: var(--accent); }.message-image:hover img { transform: scale(1.02); }.message-image:hover span { opacity: 1; }
 .message-file { max-width: 100%; padding: 7px 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--app-bg); color: var(--text-muted); }
 .message-file em { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-style: normal; font-size: 11px; }.message-file:hover { border-color: var(--accent); color: var(--text); }
+.downloadable-files { margin-top: 12px; display: grid; gap: 7px; width: min(430px, 100%); }
+.download-file-card { min-width: 0; padding: 9px 10px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text-muted); text-align: left; }
+.download-file-card:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 22%, var(--surface)); color: var(--text); }
+.download-file-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.download-file-info { min-width: 0; display: grid; gap: 2px; }.download-file-info strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); font-size: 11px; font-weight: 600; }.download-file-info small { color: var(--text-faint); font-size: 9px; }
+.download-file-action { display: flex; align-items: center; gap: 4px; color: var(--accent); font-size: 10px; font-weight: 600; }
 
 .activity-block { margin: -10px 0 26px; padding-left: 1px; }
 .working-line { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; }
@@ -145,7 +151,7 @@ button:disabled { cursor: default; opacity: .45; }
 .composer-wrap { width: min(820px, calc(100% - 42px)); margin: 0 auto; padding: 0 0 18px; }
 .composer { padding: 10px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); box-shadow: 0 4px 17px rgb(40 32 20 / 6%); transition: border-color .15s, box-shadow .15s; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 58%, var(--border)); box-shadow: 0 5px 21px rgb(160 84 54 / 10%); }
-.composer textarea { display: block; width: 100%; min-height: 52px; max-height: 180px; resize: vertical; padding: 7px 8px; border: 0; outline: 0; background: transparent; line-height: 1.5; }
+.composer textarea { display: block; width: 100%; height: 52px; min-height: 52px; max-height: 180px; resize: none; overflow-y: hidden; padding: 7px 8px; border: 0; outline: 0; background: transparent; line-height: 1.5; }
 .composer textarea::placeholder { color: var(--text-faint); }
 .composer-actions { display: flex; align-items: center; gap: 9px; }
 .attach-button { height: 30px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 12px; }

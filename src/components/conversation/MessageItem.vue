@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { downloadDir, join } from '@tauri-apps/api/path'
 import { save } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
 import { desktop } from '../../services/desktop'
 import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from '../../services/localFiles'
-import { codeCopyPayload, createMessageMarkdown, writeClipboardText } from '../../services/markdown'
+import { codeCopyPayload, createMessageMarkdown, externalHttpUrl, writeClipboardText } from '../../services/markdown'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useI18n } from '../../services/i18n'
 
@@ -82,6 +83,13 @@ async function copyCode(event) {
   } catch (error) { store.error = String(error) }
 }
 
+async function handleMessageClick(event) {
+  const url = externalHttpUrl(event.target)
+  if (!url) return copyCode(event)
+  event.preventDefault()
+  try { await openUrl(url) } catch (error) { store.error = String(error) }
+}
+
 async function downloadLocalFile(file) {
   if (!store.activeProject || downloadStatus.value[file.path] === 'saving') return
   try {
@@ -115,7 +123,7 @@ onBeforeUnmount(() => {
   <article v-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
   <article v-else class="message" :class="`message-${message.role}`">
     <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>
-    <div class="message-body markdown-body" @click="copyCode" v-html="rendered"></div>
+    <div class="message-body markdown-body" @click="handleMessageClick" v-html="rendered"></div>
     <div v-if="attachments.length" class="message-attachments">
       <button
         v-for="attachment in attachments"

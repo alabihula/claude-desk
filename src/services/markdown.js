@@ -37,6 +37,17 @@ export function codeCopyPayload(target) {
   return button && code ? { button, text: code.textContent || '' } : null
 }
 
+export function externalHttpUrl(target) {
+  const href = target?.closest?.('a[href]')?.getAttribute('href')
+  if (!href) return null
+  try {
+    const url = new URL(href)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
 export async function writeClipboardText(text, clipboard = globalThis.navigator?.clipboard) {
   if (clipboard?.writeText) return clipboard.writeText(text)
 

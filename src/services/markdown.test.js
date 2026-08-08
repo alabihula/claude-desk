@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { codeCopyPayload, createMessageMarkdown, writeClipboardText } from './markdown'
+import { codeCopyPayload, createMessageMarkdown, externalHttpUrl, writeClipboardText } from './markdown'
 
 describe('message markdown code blocks', () => {
   beforeEach(() => { document.body.innerHTML = '' })
@@ -24,5 +24,13 @@ describe('message markdown code blocks', () => {
     expect(payload.text).toBe('const safe = "<tag>"\n')
     await writeClipboardText(payload.text, clipboard)
     expect(clipboard.writeText).toHaveBeenCalledWith('const safe = "<tag>"\n')
+  })
+
+  it('recognizes only external HTTP links from message content', () => {
+    document.body.innerHTML = '<a href="http://127.0.0.1:3322"><span>Local app</span></a><a id="mail" href="mailto:test@example.com">Email</a>'
+
+    expect(externalHttpUrl(document.querySelector('span'))).toBe('http://127.0.0.1:3322/')
+    expect(externalHttpUrl(document.querySelector('#mail'))).toBeNull()
+    expect(externalHttpUrl(document.body)).toBeNull()
   })
 })

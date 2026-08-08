@@ -8,13 +8,14 @@ import { desktop } from '../../services/desktop'
 import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from '../../services/localFiles'
 import { codeCopyPayload, createMessageMarkdown, writeClipboardText } from '../../services/markdown'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useI18n } from '../../services/i18n'
 
 const props = defineProps({
   message: { type: Object, required: true },
   attachments: { type: Array, default: () => [] },
 })
 const store = useWorkspaceStore()
-const markdown = createMessageMarkdown()
+const { t } = useI18n()
 const copyTimers = new Map()
 const downloadTimers = new Map()
 const downloadableFiles = ref([])
@@ -26,7 +27,7 @@ const rendered = computed(() => {
     const name = attachment.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     content = content.replace(new RegExp(`\\n?\\n?📎 ${name}(?:\\n|$)`), '\n')
   }
-  return markdown.render(content.trim())
+  return createMessageMarkdown({ code: t('message.code'), copy: t('message.copy'), copyAria: t('message.copyCode') }).render(content.trim())
 })
 const fileRefs = computed(() => {
   return extractProjectFileReferences(props.message.content)
@@ -68,12 +69,12 @@ async function copyCode(event) {
   try {
     await writeClipboardText(payload.text)
     window.clearTimeout(copyTimers.get(payload.button))
-    payload.button.textContent = 'Copied'
-    payload.button.setAttribute('aria-label', 'Code copied')
+    payload.button.textContent = t('message.copied')
+    payload.button.setAttribute('aria-label', t('message.codeCopied'))
     payload.button.classList.add('copied')
     const timer = window.setTimeout(() => {
-      payload.button.textContent = 'Copy'
-      payload.button.setAttribute('aria-label', 'Copy code')
+      payload.button.textContent = t('message.copy')
+      payload.button.setAttribute('aria-label', t('message.copyCode'))
       payload.button.classList.remove('copied')
       copyTimers.delete(payload.button)
     }, 1600)
@@ -86,7 +87,7 @@ async function downloadLocalFile(file) {
   try {
     let defaultPath = file.name
     try { defaultPath = await join(await downloadDir(), file.name) } catch { /* Fall back to the dialog's last directory. */ }
-    const destination = await save({ title: `保存 ${file.name}`, defaultPath })
+    const destination = await save({ title: t('message.saveFile', { name: file.name }), defaultPath })
     if (!destination) return
     downloadStatus.value = { ...downloadStatus.value, [file.path]: 'saving' }
     await desktop.downloadFile(store.activeProject.path, file.path, destination)
@@ -111,16 +112,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article v-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content }}</span></article>
+  <article v-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
   <article v-else class="message" :class="`message-${message.role}`">
-    <div class="message-author">{{ message.role === 'user' ? 'You' : 'Claude' }}</div>
+    <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>
     <div class="message-body markdown-body" @click="copyCode" v-html="rendered"></div>
     <div v-if="attachments.length" class="message-attachments">
       <button
         v-for="attachment in attachments"
         :key="attachment.id"
         :class="attachment.kind === 'image' ? 'message-image' : 'message-file'"
-        :title="attachment.kind === 'image' ? `Preview ${attachment.name}` : `Reveal ${attachment.name}`"
+        :title="t(attachment.kind === 'image' ? 'message.preview' : 'message.reveal', { name: attachment.name })"
         @click="openAttachment(attachment)"
       >
         <template v-if="attachment.kind === 'image'">
@@ -145,8 +146,8 @@ onBeforeUnmount(() => {
           <span class="download-file-icon"><FileText :size="18" /></span>
           <span class="download-file-info"><strong>{{ file.name }}</strong><small>{{ formatFileSize(file.size) }}</small></span>
         </button>
-        <button class="download-file-action" :title="`下载 ${file.path}`" :disabled="downloadStatus[file.path] === 'saving'" @click="downloadLocalFile(file)">
-          <Download :size="14" />{{ downloadStatus[file.path] === 'saving' ? '保存中…' : downloadStatus[file.path] === 'saved' ? '已保存' : '下载' }}
+        <button class="download-file-action" :title="t('message.downloadTitle', { path: file.path })" :disabled="downloadStatus[file.path] === 'saving'" @click="downloadLocalFile(file)">
+          <Download :size="14" />{{ t(downloadStatus[file.path] === 'saving' ? 'message.saving' : downloadStatus[file.path] === 'saved' ? 'message.saved' : 'message.download') }}
         </button>
       </div>
     </div>

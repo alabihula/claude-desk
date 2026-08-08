@@ -2,8 +2,10 @@
 import { ref, watch } from 'vue'
 import { Check, ShieldCheck, ShieldAlert, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
+const { t } = useI18n()
 const selected = ref('acceptEdits')
 
 watch(() => store.permissionsOpen, (open) => {
@@ -19,26 +21,26 @@ function save() {
   <div v-if="store.permissionsOpen" class="modal-backdrop" @click.self="store.permissionsOpen = false">
     <section class="settings-modal permissions-modal">
       <header>
-        <div><span class="eyebrow">Claude Desk</span><h2>Permissions</h2></div>
-        <button class="icon-button" title="Close" @click="store.permissionsOpen = false"><X :size="18" /></button>
+        <div><span class="eyebrow">Claude Desk</span><h2>{{ t('permissions.title') }}</h2></div>
+        <button class="icon-button" :title="t('common.close')" @click="store.permissionsOpen = false"><X :size="18" /></button>
       </header>
       <div class="settings-body permission-body">
-        <p class="permission-intro">Choose what Claude can access while working. This applies to future messages.</p>
+        <p class="permission-intro">{{ t('permissions.intro') }}</p>
         <button class="permission-option" :class="{ selected: selected === 'acceptEdits' }" @click="selected = 'acceptEdits'">
           <span class="permission-icon"><ShieldCheck :size="20" /></span>
-          <span><strong>Project & attachments</strong><small>Recommended</small><em>Work in the current project and read files copied into Claude Desk. Other protected actions may still be denied.</em></span>
+          <span><strong>{{ t('permissions.projectTitle') }}</strong><small>{{ t('permissions.recommended') }}</small><em>{{ t('permissions.projectDesc') }}</em></span>
           <Check v-if="selected === 'acceptEdits'" :size="18" />
         </button>
         <button class="permission-option danger-option" :class="{ selected: selected === 'bypassPermissions' }" @click="selected = 'bypassPermissions'">
           <span class="permission-icon"><ShieldAlert :size="20" /></span>
-          <span><strong>Full access</strong><small>No further prompts</small><em>Allow Claude to read and modify any file and run commands without confirmation. Use only with trusted projects.</em></span>
+          <span><strong>{{ t('permissions.fullTitle') }}</strong><small>{{ t('permissions.noPrompts') }}</small><em>{{ t('permissions.fullDesc') }}</em></span>
           <Check v-if="selected === 'bypassPermissions'" :size="18" />
         </button>
-        <div v-if="selected === 'bypassPermissions'" class="permission-warning"><ShieldAlert :size="16" /> Full access uses Claude's native bypass-permissions mode.</div>
+        <div v-if="selected === 'bypassPermissions'" class="permission-warning"><ShieldAlert :size="16" /> {{ t('permissions.warning') }}</div>
       </div>
       <footer>
-        <button class="secondary-button" @click="store.permissionsOpen = false">Cancel</button>
-        <button class="primary-button" @click="save">Save Permissions</button>
+        <button class="secondary-button" @click="store.permissionsOpen = false">{{ t('common.cancel') }}</button>
+        <button class="primary-button" @click="save">{{ t('permissions.save') }}</button>
       </footer>
     </section>
   </div>

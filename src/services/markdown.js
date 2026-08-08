@@ -6,26 +6,27 @@ const LANGUAGE_LABELS = {
   ts: 'TypeScript', typescript: 'TypeScript', vue: 'Vue', xml: 'XML', yaml: 'YAML', yml: 'YAML',
 }
 
-function codeBlockLabel(info = '') {
+function codeBlockLabel(info = '', fallback = 'Code') {
   const language = info.trim().split(/\s+/)[0].toLowerCase()
-  return LANGUAGE_LABELS[language] || language || 'Code'
+  return LANGUAGE_LABELS[language] || language || fallback
 }
 
-function wrapCodeBlock(rendered, token, markdown) {
-  const label = markdown.utils.escapeHtml(codeBlockLabel(token.info))
-  return `<div class="code-block"><div class="code-block-toolbar"><span>${label}</span><button type="button" class="code-copy-button" data-copy-code aria-label="Copy code">Copy</button></div>${rendered}</div>`
+function wrapCodeBlock(rendered, token, markdown, labels) {
+  const label = markdown.utils.escapeHtml(codeBlockLabel(token.info, labels.code))
+  return `<div class="code-block"><div class="code-block-toolbar"><span>${label}</span><button type="button" class="code-copy-button" data-copy-code aria-label="${markdown.utils.escapeHtml(labels.copyAria)}">${markdown.utils.escapeHtml(labels.copy)}</button></div>${rendered}</div>`
 }
 
-export function createMessageMarkdown() {
+export function createMessageMarkdown(labels = {}) {
+  const resolvedLabels = { code: 'Code', copy: 'Copy', copyAria: 'Copy code', ...labels }
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
   const renderFence = markdown.renderer.rules.fence
   const renderCodeBlock = markdown.renderer.rules.code_block
 
   markdown.renderer.rules.fence = (tokens, index, options, env, self) => (
-    wrapCodeBlock(renderFence(tokens, index, options, env, self), tokens[index], markdown)
+    wrapCodeBlock(renderFence(tokens, index, options, env, self), tokens[index], markdown, resolvedLabels)
   )
   markdown.renderer.rules.code_block = (tokens, index, options, env, self) => (
-    wrapCodeBlock(renderCodeBlock(tokens, index, options, env, self), tokens[index], markdown)
+    wrapCodeBlock(renderCodeBlock(tokens, index, options, env, self), tokens[index], markdown, resolvedLabels)
   )
   return markdown
 }

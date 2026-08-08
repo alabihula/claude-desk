@@ -10,8 +10,10 @@ import ImageLightbox from './components/common/ImageLightbox.vue'
 import Home from './views/Home.vue'
 import Workspace from './views/Workspace.vue'
 import { useWorkspaceStore } from './stores/workspace'
+import { useI18n } from './services/i18n'
 
 const store = useWorkspaceStore()
+const { t } = useI18n()
 const dragging = ref(false)
 let unlistenDrag
 
@@ -34,6 +36,7 @@ onMounted(async () => {
   window.addEventListener('keydown', shortcuts)
   await store.init()
   document.documentElement.dataset.theme = store.settings.theme
+  document.documentElement.lang = store.settings.language
   unlistenDrag = await getCurrentWebviewWindow().onDragDropEvent((event) => {
     if (event.payload.type === 'enter' || event.payload.type === 'over') dragging.value = true
     if (event.payload.type === 'leave') dragging.value = false
@@ -51,7 +54,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', shortcuts); unlist
     <AppSidebar v-if="store.projects.length" />
     <Workspace v-if="store.activeProject" />
     <Home v-else />
-    <div v-if="dragging && store.activeConversation" class="drop-overlay"><div><span><Image :size="26" /></span><strong>Drop files here</strong><small>Claude will receive a local copy</small></div></div>
+    <div v-if="dragging && store.activeConversation" class="drop-overlay"><div><span><Image :size="26" /></span><strong>{{ t('app.dropTitle') }}</strong><small>{{ t('app.dropSubtitle') }}</small></div></div>
     <div v-if="store.error" class="toast" @click="store.error = ''">{{ store.error }}</div>
     <DiffDrawer />
     <SettingsModal />

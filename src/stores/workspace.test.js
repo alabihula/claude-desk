@@ -10,6 +10,9 @@ vi.mock('../services/desktop', () => ({
     interruptClaude: vi.fn(),
     stopClaude: vi.fn(),
     removeProject: vi.fn(),
+    reorderProjects: vi.fn(),
+    reorderConversations: vi.fn(),
+    saveSettings: vi.fn(),
     touchProject: vi.fn(),
     listConversations: vi.fn(),
     gitStatus: vi.fn(),
@@ -41,6 +44,7 @@ function setupStore() {
   const store = useWorkspaceStore()
   store.projects = [{ id: 'project-1', path: '/tmp/project' }]
   store.conversations = [{ id: 'conversation-1', projectId: 'project-1', claudeSessionId: 'session-1', title: 'Conversation' }]
+  store.conversationsByProject['project-1'] = store.conversations
   store.activeProjectId = 'project-1'
   store.activeConversationId = 'conversation-1'
   store.messages['conversation-1'] = [{ id: 'old-user', role: 'user', content: 'start' }]
@@ -190,5 +194,45 @@ describe('workspace supplemental messages', () => {
     expect(desktop.gitStatus).toHaveBeenCalledWith('/tmp/project')
     expect(store.activeChanges).toEqual([])
     expect(store.diffDrawer).toBeNull()
+  })
+
+  it('persists project and conversation drag ordering', async () => {
+    const store = setupStore()
+    store.projects = [
+      { id: 'project-1', path: '/tmp/project' },
+      { id: 'project-2', path: '/tmp/project-2' },
+      { id: 'project-3', path: '/tmp/project-3' },
+    ]
+    store.conversations.push({ id: 'conversation-2', projectId: 'project-1', title: 'Second' })
+
+    await store.reorderProjects('project-3', 'project-1')
+    await store.reorderConversations('project-1', 'conversation-1', 'conversation-2', 'after')
+
+    expect(store.projects.map((item) => item.id)).toEqual(['project-3', 'project-1', 'project-2'])
+    expect(store.conversations.map((item) => item.id)).toEqual(['conversation-2', 'conversation-1'])
+    expect(desktop.reorderProjects).toHaveBeenCalledWith(['project-3', 'project-1', 'project-2'])
+    expect(desktop.reorderConversations).toHaveBeenCalledWith('project-1', ['conversation-2', 'conversation-1'])
+  })
+
+  it('loads every project conversation list when switching to tree mode', async () => {
+    const store = setupStore()
+    store.projects.push({ id: 'project-2', path: '/tmp/project-2' })
+    desktop.listConversations.mockResolvedValueOnce([{ id: 'conversation-2', projectId: 'project-2', title: 'Other' }])
+
+    await store.setSidebarMode('tree')
+
+    expect(store.settings.sidebarMode).toBe('tree')
+    expect(desktop.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ sidebarMode: 'tree' }))
+    expect(desktop.listConversations).toHaveBeenCalledWith('project-2')
+    expect(store.projectConversations('project-2')).toHaveLength(1)
+  })
+
+  it('persists interface language changes immediately', async () => {
+    const store = setupStore()
+
+    await store.setLanguage('zh-CN')
+
+    expect(store.settings.language).toBe('zh-CN')
+    expect(desktop.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ language: 'zh-CN' }))
   })
 })

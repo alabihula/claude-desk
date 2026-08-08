@@ -1,12 +1,8 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
-  Folder,
   FolderOpen,
-  MessageSquarePlus,
-  MoreHorizontal,
   Pencil,
-  Plus,
   Settings,
   ShieldCheck,
   Terminal,
@@ -17,8 +13,11 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { desktop } from '../../services/desktop'
 import BrandMark from '../common/BrandMark.vue'
+import SidebarNavigation from './SidebarNavigation.vue'
+import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
+const { t } = useI18n()
 const menu = ref(null)
 const renamingConversationId = ref(null)
 const renameTitle = ref('')
@@ -37,7 +36,7 @@ function dragWindow(event) {
 }
 
 async function chooseProject() {
-  const path = await open({ directory: true, multiple: false, title: 'Add a project to Claude Desk' })
+  const path = await open({ directory: true, multiple: false, title: t('sidebar.addProject') })
   if (path) await store.addProject(path)
 }
 
@@ -63,8 +62,8 @@ function closeMenu(event) {
 async function removeProject(project) {
   menu.value = null
   const approved = await confirm(
-    `Remove “${project.name}” from Claude Desk?\n\nYour project files will stay on disk.`,
-    { title: 'Remove Project', kind: 'warning', okLabel: 'Remove', cancelLabel: 'Cancel' },
+    t('sidebar.removeConfirm', { name: project.name }),
+    { title: t('sidebar.removeTitle'), kind: 'warning', okLabel: t('sidebar.remove'), cancelLabel: t('common.cancel') },
   )
   if (approved) await store.removeProject(project)
 }
@@ -72,8 +71,8 @@ async function removeProject(project) {
 async function deleteConversation(conversation) {
   menu.value = null
   const approved = await confirm(
-    `Delete “${conversation.title}”?${store.runs[conversation.id] ? '\n\nClaude is currently working in this conversation and will be stopped.' : ''}`,
-    { title: 'Delete Conversation', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' },
+    t('sidebar.deleteConfirm', { name: conversation.title, running: store.runs[conversation.id] ? t('sidebar.deleteRunning') : '' }),
+    { title: t('sidebar.deleteTitle'), kind: 'warning', okLabel: t('sidebar.delete'), cancelLabel: t('common.cancel') },
   )
   if (approved) await store.deleteConversation(conversation)
 }
@@ -92,7 +91,7 @@ function startRename(conversation) {
 async function commitRename() {
   const id = renamingConversationId.value
   if (!id) return
-  const conversation = store.conversations.find((item) => item.id === id)
+  const conversation = store.conversationById(id)
   const title = renameTitle.value.trim()
   renamingConversationId.value = null
   if (conversation && title && title !== conversation.title) await store.renameConversation(conversation, title)
@@ -134,71 +133,26 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="sidebar-scroll">
-      <section class="sidebar-section">
-        <div class="section-title">
-          <span>Projects</span>
-          <button class="icon-button small" title="Add project" @click="chooseProject"><Plus :size="15" /></button>
-        </div>
-        <div
-          v-for="project in store.projects"
-          :key="project.id"
-          class="sidebar-item project-item"
-          :class="{ active: store.activeProjectId === project.id }"
-          :title="project.path"
-          role="button"
-          tabindex="0"
-          @click="store.selectProject(project.id)"
-          @keydown.enter="store.selectProject(project.id)"
-        >
-          <FolderOpen v-if="store.activeProjectId === project.id" :size="16" />
-          <Folder v-else :size="16" />
-          <span>{{ project.name }}</span>
-          <button class="row-action" title="Project actions" @click.stop="toggleMenu($event, 'project', project)"><MoreHorizontal :size="15" /></button>
-        </div>
-        <button class="sidebar-add" @click="chooseProject"><Plus :size="15" /> Add Project</button>
-      </section>
-
-      <section v-if="store.activeProject" class="sidebar-section conversations-section">
-        <div class="section-title">
-          <span>Conversations</span>
-          <button class="icon-button small" title="New conversation" @click="store.newConversation"><MessageSquarePlus :size="15" /></button>
-        </div>
-        <div
-          v-for="conversation in store.conversations"
-          :key="conversation.id"
-          class="sidebar-item conversation-item"
-          :class="{ active: store.activeConversationId === conversation.id }"
-          role="button"
-          tabindex="0"
-          @click="store.selectConversation(conversation.id)"
-          @keydown.enter="store.selectConversation(conversation.id)"
-        >
-          <input
-            v-if="renamingConversationId === conversation.id"
-            v-model="renameTitle"
-            class="sidebar-rename-input"
-            aria-label="Conversation name"
-            @click.stop
-            @keydown.enter.stop.prevent="commitRename"
-            @keydown.esc.stop.prevent="cancelRename"
-            @blur="commitRename"
-          />
-          <span v-else>{{ conversation.title }}</span>
-          <span v-if="store.runs[conversation.id]" class="run-dot"></span>
-          <button class="row-action" title="Conversation actions" @click.stop="toggleMenu($event, 'conversation', conversation)"><MoreHorizontal :size="15" /></button>
-        </div>
-        <button class="sidebar-add" @click="store.newConversation"><Plus :size="15" /> New chat</button>
-      </section>
+      <SidebarNavigation
+        :renaming-conversation-id="renamingConversationId"
+        :rename-title="renameTitle"
+        @add-project="chooseProject"
+        @project-menu="toggleMenu($event.event, 'project', $event.item)"
+        @conversation-menu="toggleMenu($event.event, 'conversation', $event.item)"
+        @update:rename-title="renameTitle = $event"
+        @commit-rename="commitRename"
+        @cancel-rename="cancelRename"
+      />
     </div>
 
     <footer class="sidebar-footer">
       <button class="sidebar-item permission-entry" @click="store.permissionsOpen = true">
-        <ShieldCheck :size="16" /><span>Permissions</span>
-        <small>{{ store.settings.permissionMode === 'bypassPermissions' ? 'Full' : 'Project' }}</small>
+        <ShieldCheck :size="16" /><span>{{ t('sidebar.permissions') }}</span>
+        <small>{{ t(store.settings.permissionMode === 'bypassPermissions' ? 'sidebar.full' : 'sidebar.project') }}</small>
       </button>
-      <button class="sidebar-item" @click="store.settingsOpen = true"><Settings :size="16" /><span>Settings</span></button>
+      <button class="sidebar-item" @click="store.settingsOpen = true"><Settings :size="16" /><span>{{ t('sidebar.settings') }}</span></button>
       <div v-if="store.health" class="health-line" :class="{ healthy: store.health.available }">
-        <span></span>{{ store.health.available ? store.health.version : 'Claude not found' }}
+        <span></span>{{ store.health.available ? store.health.version : t('sidebar.claudeNotFound') }}
       </div>
     </footer>
 
@@ -212,14 +166,14 @@ onBeforeUnmount(() => {
         @click.stop
       >
         <template v-if="menu.type === 'project'">
-          <button role="menuitem" @click="runMenuAction('reveal')"><FolderOpen :size="14" /> Reveal in Finder</button>
-          <button role="menuitem" @click="runMenuAction('terminal')"><Terminal :size="14" /> Open in Terminal</button>
+          <button role="menuitem" @click="runMenuAction('reveal')"><FolderOpen :size="14" /> {{ t('sidebar.reveal') }}</button>
+          <button role="menuitem" @click="runMenuAction('terminal')"><Terminal :size="14" /> {{ t('sidebar.terminal') }}</button>
           <div class="menu-separator"></div>
-          <button class="danger" role="menuitem" @click="runMenuAction('remove')"><Trash2 :size="14" /> Remove Project</button>
+          <button class="danger" role="menuitem" @click="runMenuAction('remove')"><Trash2 :size="14" /> {{ t('sidebar.removeProject') }}</button>
         </template>
         <template v-else>
-          <button role="menuitem" @click="runMenuAction('rename')"><Pencil :size="14" /> Rename</button>
-          <button class="danger" role="menuitem" @click="runMenuAction('delete')"><Trash2 :size="14" /> Delete Conversation</button>
+          <button role="menuitem" @click="runMenuAction('rename')"><Pencil :size="14" /> {{ t('sidebar.rename') }}</button>
+          <button class="danger" role="menuitem" @click="runMenuAction('delete')"><Trash2 :size="14" /> {{ t('sidebar.deleteConversation') }}</button>
         </template>
       </div>
     </Teleport>

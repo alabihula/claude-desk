@@ -10,8 +10,10 @@ import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
 import QueuedMessages from './QueuedMessages.vue'
+import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
+const { t } = useI18n()
 const text = ref('')
 const attachments = ref([])
 const input = ref(null)
@@ -28,7 +30,7 @@ async function addPaths(paths) {
 }
 
 async function chooseFiles() {
-  const paths = await open({ multiple: true, directory: false, title: 'Attach files for Claude' })
+  const paths = await open({ multiple: true, directory: false, title: t('composer.attachDialog') })
   if (paths) await addPaths(Array.isArray(paths) ? paths : [paths])
 }
 
@@ -96,27 +98,27 @@ onBeforeUnmount(() => {
           <img v-if="attachment.kind === 'image'" :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
           <div v-else class="file-thumb"><File :size="21" /></div>
           <span>{{ attachment.name }}</span>
-          <button title="Remove attachment" @click="attachments.splice(index, 1)"><X :size="13" /></button>
+          <button :title="t('composer.removeAttachment')" @click="attachments.splice(index, 1)"><X :size="13" /></button>
         </div>
       </div>
       <textarea
         ref="input"
         v-model="text"
         rows="1"
-        :placeholder="store.activeRun ? '补充内容会先加入待处理队列…' : 'Ask Claude…'"
+        :placeholder="t(store.activeRun ? 'composer.queuedPlaceholder' : 'composer.placeholder')"
         @keydown="keydown"
         @compositionstart="compositionStart"
         @compositionend="compositionEnd"
         @paste="onPaste"
       ></textarea>
       <div class="composer-actions">
-        <button class="attach-button" :disabled="adding" title="Attach files" @click="chooseFiles">
-          <Paperclip :size="17" /> <span>{{ adding ? 'Adding…' : 'Attach' }}</span>
+        <button class="attach-button" :disabled="adding" :title="t('composer.attachFiles')" @click="chooseFiles">
+          <Paperclip :size="17" /> <span>{{ t(adding ? 'composer.adding' : 'composer.attach') }}</span>
         </button>
         <ContextMeter />
-        <span class="composer-hint">{{ store.activeRun ? 'Enter 加入队列' : 'Enter 发送' }} · Shift Enter 换行</span>
-        <button v-if="store.activeRun" class="send-button stop-button" title="Stop Claude" @click="store.stopClaude()"><Square :size="13" fill="currentColor" /></button>
-        <button class="send-button" :disabled="!text.trim() && !attachments.length" :title="store.activeRun ? '加入待处理队列' : '发送'" @click="send"><ArrowUp :size="18" /></button>
+        <span class="composer-hint">{{ t(store.activeRun ? 'composer.queueHint' : 'composer.sendHint') }} · {{ t('composer.newlineHint') }}</span>
+        <button v-if="store.activeRun" class="send-button stop-button" :title="t('composer.stop')" @click="store.stopClaude()"><Square :size="13" fill="currentColor" /></button>
+        <button class="send-button" :disabled="!text.trim() && !attachments.length" :title="t(store.activeRun ? 'composer.queue' : 'composer.send')" @click="send"><ArrowUp :size="18" /></button>
       </div>
     </div>
   </div>

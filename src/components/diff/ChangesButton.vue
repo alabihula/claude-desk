@@ -3,8 +3,10 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { FileDiff } from 'lucide-vue-next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
+const { t } = useI18n()
 let refreshTimer
 let unlistenFocus
 
@@ -36,9 +38,9 @@ onBeforeUnmount(() => {
   <button
     v-if="store.activeChanges.length"
     class="changes-button"
-    :title="`Review ${store.activeChanges.length} changed file${store.activeChanges.length === 1 ? '' : 's'}`"
+    :title="t('changes.review', { count: store.activeChanges.length })"
     @click="openChanges"
   >
-    <FileDiff :size="15" /><span>Changes</span><em>{{ store.activeChanges.length }}</em>
+    <FileDiff :size="15" /><span>{{ t('changes.label') }}</span><em>{{ store.activeChanges.length }}</em>
   </button>
 </template>

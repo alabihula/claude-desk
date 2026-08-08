@@ -14,6 +14,8 @@ const defaultSettings = {
   permissionMode: 'acceptEdits',
   theme: 'system',
   editor: 'vscode',
+  sidebarMode: 'focused',
+  language: 'en',
 }
 
 let diffRequestId = 0
@@ -23,6 +25,17 @@ let changesRequestId = 0
 function conciseTitle(content) {
   const title = content.replace(/\s+/g, ' ').trim()
   return title.length > 28 ? `${title.slice(0, 28)}…` : title || 'New Conversation'
+}
+
+function moveRelative(items, sourceId, targetId, position = 'before') {
+  if (sourceId === targetId) return items
+  const source = items.find((item) => item.id === sourceId)
+  if (!source || !items.some((item) => item.id === targetId)) return items
+  const remaining = items.filter((item) => item.id !== sourceId)
+  const targetIndex = remaining.findIndex((item) => item.id === targetId)
+  const insertIndex = targetIndex + (position === 'after' ? 1 : 0)
+  const next = [...remaining.slice(0, insertIndex), source, ...remaining.slice(insertIndex)]
+  return next.every((item, index) => item.id === items[index]?.id) ? items : next
 }
 
 function newRun(operation = 'chat', context = null) {
@@ -44,6 +57,7 @@ export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
     projects: [],
     conversations: [],
+    conversationsByProject: {},
     messages: {},
     attachmentsByMessage: {},
     activeProjectId: null,
@@ -96,6 +110,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
     activeChanges(state) { return state.changes[state.activeProjectId] || [] },
+    projectConversations: (state) => (projectId) => state.conversationsByProject[projectId] || [],
+    conversationById: (state) => (id) => state.conversations.find((item) => item.id === id)
+      || Object.values(state.conversationsByProject).flat().find((item) => item.id === id)
+      || null,
   },
 
   actions: {
@@ -108,6 +126,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.eventUnlisten = await listen('claude-event', ({ payload }) => this.handleClaudeEvent(payload))
         await this.refreshHealth()
         if (this.projects[0]) await this.selectProject(this.projects[0].id)
+        if (this.settings.sidebarMode === 'tree') await this.loadSidebarConversations()
       } catch (error) {
         this.error = String(error)
       } finally {
@@ -141,22 +160,52 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!this.conversations.length) await this.newConversation()
     },
 
-    async selectProject(id) {
-      if (this.activeProjectId === id && this.conversations.length) return
+    async selectProject(id, conversationId = null) {
+      if (this.activeProjectId === id && this.conversations.length) {
+        if (conversationId && conversationId !== this.activeConversationId) await this.selectConversation(conversationId)
+        return
+      }
       this.activeProjectId = id
       this.filePreview = null
       this.workspaceView = 'conversation'
       await desktop.touchProject(id)
-      this.conversations = await desktop.listConversations(id)
-      const first = this.conversations[0]
+      this.conversations = await this.loadProjectConversations(id, true)
+      const first = this.conversations.find((item) => item.id === conversationId) || this.conversations[0]
       this.activeConversationId = null
       if (first) await this.selectConversation(first.id)
       await this.refreshChanges()
     },
 
+    async loadProjectConversations(projectId, force = false) {
+      if (!force && this.conversationsByProject[projectId]) return this.conversationsByProject[projectId]
+      const conversations = await desktop.listConversations(projectId)
+      this.conversationsByProject[projectId] = conversations
+      if (this.activeProjectId === projectId) this.conversations = conversations
+      return conversations
+    },
+
+    async loadSidebarConversations() {
+      await Promise.all(this.projects.map((project) => this.loadProjectConversations(project.id)))
+    },
+
+    async setSidebarMode(mode) {
+      if (!['focused', 'tree'].includes(mode) || this.settings.sidebarMode === mode) return
+      this.settings = { ...this.settings, sidebarMode: mode }
+      await desktop.saveSettings(this.settings)
+      if (mode === 'tree') await this.loadSidebarConversations()
+    },
+
+    async setLanguage(language) {
+      if (!['en', 'zh-CN'].includes(language) || this.settings.language === language) return
+      this.settings = { ...this.settings, language }
+      if (typeof document !== 'undefined') document.documentElement.lang = language
+      await desktop.saveSettings(this.settings)
+    },
+
     async removeProject(project) {
       await desktop.removeProject(project.id)
       this.projects = this.projects.filter((item) => item.id !== project.id)
+      delete this.conversationsByProject[project.id]
       if (this.activeProjectId !== project.id) return
       this.activeProjectId = null
       this.activeConversationId = null
@@ -164,10 +213,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.projects[0]) await this.selectProject(this.projects[0].id)
     },
 
-    async newConversation() {
-      if (!this.activeProjectId) return
-      const conversation = await desktop.createConversation(this.activeProjectId)
+    async newConversation(projectId = this.activeProjectId) {
+      if (!projectId) return
+      if (this.activeProjectId !== projectId) await this.selectProject(projectId)
+      const conversation = await desktop.createConversation(projectId)
       this.conversations.unshift(conversation)
+      this.conversationsByProject[projectId] = this.conversations
       this.messages[conversation.id] = []
       this.activeConversationId = conversation.id
     },
@@ -188,19 +239,55 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async renameConversation(conversation, title) {
       await desktop.renameConversation(conversation.id, title)
-      conversation.title = title.trim()
+      const nextTitle = title.trim()
+      conversation.title = nextTitle
+      for (const conversations of Object.values(this.conversationsByProject)) {
+        const match = conversations.find((item) => item.id === conversation.id)
+        if (match) match.title = nextTitle
+      }
     },
 
     async deleteConversation(conversation) {
       if (this.runs[conversation.id]) await this.stopClaude(conversation.id)
       await desktop.deleteConversation(conversation.id)
-      this.conversations = this.conversations.filter((item) => item.id !== conversation.id)
+      const projectId = conversation.projectId
+      const remaining = (this.conversationsByProject[projectId] || []).filter((item) => item.id !== conversation.id)
+      this.conversationsByProject[projectId] = remaining
+      if (this.activeProjectId === projectId) this.conversations = remaining
       for (const message of this.messages[conversation.id] || []) delete this.attachmentsByMessage[message.id]
       delete this.messages[conversation.id]
       delete this.queuedMessages[conversation.id]
       if (this.activeConversationId === conversation.id) {
         this.activeConversationId = null
         if (this.conversations[0]) await this.selectConversation(this.conversations[0].id)
+      }
+    },
+
+    async reorderProjects(sourceId, targetId, position = 'before') {
+      const previous = this.projects
+      const next = moveRelative(previous, sourceId, targetId, position)
+      if (next === previous) return
+      this.projects = next
+      try {
+        await desktop.reorderProjects(next.map((item) => item.id))
+      } catch (error) {
+        this.projects = previous
+        throw error
+      }
+    },
+
+    async reorderConversations(projectId, sourceId, targetId, position = 'before') {
+      const previous = this.conversationsByProject[projectId] || []
+      const next = moveRelative(previous, sourceId, targetId, position)
+      if (next === previous) return
+      this.conversationsByProject[projectId] = next
+      if (this.activeProjectId === projectId) this.conversations = next
+      try {
+        await desktop.reorderConversations(projectId, next.map((item) => item.id))
+      } catch (error) {
+        this.conversationsByProject[projectId] = previous
+        if (this.activeProjectId === projectId) this.conversations = previous
+        throw error
       }
     },
 

@@ -69,6 +69,17 @@ fn connect(app: &AppHandle) -> Result<Connection, String> {
     Ok(connection)
 }
 
+fn has_column(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| error.to_string())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?;
+    let found = columns.filter_map(Result::ok).any(|name| name == column);
+    Ok(found)
+}
+
 pub fn migrate(app: &AppHandle) -> Result<(), String> {
     let connection = connect(app)?;
     connection
@@ -80,7 +91,8 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
               path TEXT NOT NULL UNIQUE,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
-              last_opened_at TEXT NOT NULL
+              last_opened_at TEXT NOT NULL,
+              sort_order INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS conversations (
               id TEXT PRIMARY KEY,
@@ -89,7 +101,8 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
               claude_session_id TEXT NOT NULL,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
-              last_opened_at TEXT NOT NULL
+              last_opened_at TEXT NOT NULL,
+              sort_order INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS conversations_project_idx
               ON conversations(project_id, last_opened_at DESC);
@@ -119,18 +132,25 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
 
-    let has_message_id = connection
-        .prepare("PRAGMA table_info(attachments)")
-        .and_then(|mut statement| {
-            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-            Ok(columns
-                .filter_map(Result::ok)
-                .any(|name| name == "message_id"))
-        })
-        .map_err(|error| error.to_string())?;
-    if !has_message_id {
+    if !has_column(&connection, "attachments", "message_id")? {
         connection
             .execute("ALTER TABLE attachments ADD COLUMN message_id TEXT", [])
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(&connection, "projects", "sort_order")? {
+        connection
+            .execute(
+                "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(&connection, "conversations", "sort_order")? {
+        connection
+            .execute(
+                "ALTER TABLE conversations ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
             .map_err(|error| error.to_string())?;
     }
 
@@ -160,7 +180,7 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
 pub fn list_projects(app: AppHandle) -> Result<Vec<Project>, String> {
     let connection = connect(&app)?;
     let mut statement = connection
-        .prepare("SELECT id, name, path, created_at, updated_at, last_opened_at FROM projects ORDER BY last_opened_at DESC")
+        .prepare("SELECT id, name, path, created_at, updated_at, last_opened_at FROM projects ORDER BY sort_order ASC, last_opened_at DESC")
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
@@ -208,9 +228,16 @@ pub fn add_project(app: AppHandle, path: String) -> Result<Project, String> {
         updated_at: timestamp.clone(),
         last_opened_at: timestamp,
     };
+    let sort_order = connection
+        .query_row(
+            "SELECT COALESCE(MIN(sort_order), 0) - 1 FROM projects",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?;
     connection.execute(
-        "INSERT INTO projects (id, name, path, created_at, updated_at, last_opened_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![project.id, project.name, project.path, project.created_at, project.updated_at, project.last_opened_at],
+        "INSERT INTO projects (id, name, path, created_at, updated_at, last_opened_at, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![project.id, project.name, project.path, project.created_at, project.updated_at, project.last_opened_at, sort_order],
     ).map_err(|error| error.to_string())?;
     Ok(project)
 }
@@ -235,10 +262,27 @@ pub fn remove_project(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn reorder_projects(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    let mut connection = connect(&app)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    for (index, id) in ids.iter().enumerate() {
+        transaction
+            .execute(
+                "UPDATE projects SET sort_order = ?1 WHERE id = ?2",
+                params![index as i64, id],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn list_conversations(app: AppHandle, project_id: String) -> Result<Vec<Conversation>, String> {
     let connection = connect(&app)?;
     let mut statement = connection.prepare(
-        "SELECT id, project_id, title, claude_session_id, created_at, updated_at, last_opened_at FROM conversations WHERE project_id = ?1 ORDER BY last_opened_at DESC"
+        "SELECT id, project_id, title, claude_session_id, created_at, updated_at, last_opened_at FROM conversations WHERE project_id = ?1 ORDER BY sort_order ASC, last_opened_at DESC"
     ).map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([project_id], |row| {
@@ -269,9 +313,17 @@ pub fn create_conversation(app: AppHandle, project_id: String) -> Result<Convers
         updated_at: timestamp.clone(),
         last_opened_at: timestamp,
     };
-    connect(&app)?.execute(
-        "INSERT INTO conversations (id, project_id, title, claude_session_id, created_at, updated_at, last_opened_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![conversation.id, conversation.project_id, conversation.title, conversation.claude_session_id, conversation.created_at, conversation.updated_at, conversation.last_opened_at],
+    let connection = connect(&app)?;
+    let sort_order = connection
+        .query_row(
+            "SELECT COALESCE(MIN(sort_order), 0) - 1 FROM conversations WHERE project_id = ?1",
+            [&conversation.project_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    connection.execute(
+        "INSERT INTO conversations (id, project_id, title, claude_session_id, created_at, updated_at, last_opened_at, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![conversation.id, conversation.project_id, conversation.title, conversation.claude_session_id, conversation.created_at, conversation.updated_at, conversation.last_opened_at, sort_order],
     ).map_err(|error| error.to_string())?;
     Ok(conversation)
 }
@@ -308,6 +360,27 @@ pub fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
         .execute("DELETE FROM conversations WHERE id = ?1", [id])
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn reorder_conversations(
+    app: AppHandle,
+    project_id: String,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let mut connection = connect(&app)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    for (index, id) in ids.iter().enumerate() {
+        transaction
+            .execute(
+                "UPDATE conversations SET sort_order = ?1 WHERE id = ?2 AND project_id = ?3",
+                params![index as i64, id, project_id],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 #[tauri::command]

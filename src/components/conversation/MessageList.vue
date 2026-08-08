@@ -11,7 +11,12 @@ const props = defineProps({
 const scroller = ref(null)
 
 function scrollToBottom() { nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: 'smooth' })) }
-watch(() => [props.messages.length, props.run?.content?.length, props.run?.activities?.length], scrollToBottom)
+watch(() => [
+  props.messages.length,
+  props.run?.content?.length,
+  props.run?.timeline?.length,
+  props.run?.timeline?.reduce((total, item) => total + (item.text?.length || 0), 0),
+], scrollToBottom)
 onMounted(scrollToBottom)
 </script>
 
@@ -19,11 +24,11 @@ onMounted(scrollToBottom)
   <div ref="scroller" class="message-scroller">
     <div class="message-column">
       <MessageItem v-for="message in messages" :key="message.id" :message="message" :attachments="attachmentsByMessage[message.id] || []" />
+      <ActivityList v-if="run" :run="run" />
       <article v-if="run?.content" class="message message-assistant streaming-message">
         <div class="message-author">Claude</div>
         <div class="message-body markdown-body live-text">{{ run.content }}</div>
       </article>
-      <ActivityList v-if="run" :run="run" />
       <slot></slot>
     </div>
   </div>

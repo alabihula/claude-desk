@@ -3,9 +3,10 @@ import { listen } from '@tauri-apps/api/event'
 import { desktop } from '../services/desktop'
 import { attachmentPrompt } from '../services/attachments'
 import { preferredChange } from '../services/changes'
-import { mergeActivity, parseClaudeEvent } from '../services/claude/parser'
+import { parseClaudeEvent } from '../services/claude/parser'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
+import { applyRunTimelineEvent } from '../services/claude/timeline'
 
 const defaultSettings = {
   command: 'claude',
@@ -39,11 +40,16 @@ function moveRelative(items, sourceId, targetId, position = 'before') {
 }
 
 function newRun(operation = 'chat', context = null) {
+  const activities = operation === 'compact' ? [{ id: 'compact', label: 'Compacting context', status: 'running' }] : []
   return {
     runId: null,
     operation,
     content: '',
-    activities: operation === 'compact' ? [{ id: 'compact', label: 'Compacting context', status: 'running' }] : [],
+    activities,
+    timeline: activities.map((activity) => ({ id: `activity:${activity.id}`, type: 'activity', activity })),
+    streamBlocks: {},
+    streamMessageId: '',
+    timelineSequence: 0,
     status: 'starting',
     error: '',
     finalized: false,
@@ -411,14 +417,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       if (payload.kind === 'stream') {
         for (const event of parseClaudeEvent(payload.data)) {
+          if (applyRunTimelineEvent(run, event)) continue
           if (event.type === 'text') { run.content += event.text; run.sawPartialText = true }
           if (event.type === 'full-text' && !run.sawPartialText && !run.content) run.content = event.text
-          if (event.type === 'activity') mergeActivity(run.activities, event.activity)
           if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: event.estimated })
-          if (event.type === 'activity-complete') {
-            const activity = run.activities.find((item) => item.id === event.id)
-            if (activity) activity.status = event.error ? 'error' : 'success'
-          }
           if (event.type === 'result') {
             if (!run.content && event.text) run.content = event.text
             if (!run.context.measured && event.tokens) Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: true })

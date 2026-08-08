@@ -45,8 +45,17 @@ export function parseClaudeEvent(payload) {
 
   if (payload.type === 'stream_event') {
     const event = payload.event || {}
+    if (event.type === 'message_start') {
+      events.push({ type: 'message-start', messageId: event.message?.id || '' })
+    }
+    if (event.type === 'content_block_start' && ['thinking', 'redacted_thinking'].includes(event.content_block?.type)) {
+      events.push({ type: 'thinking-start', index: event.index, hidden: event.content_block.type === 'redacted_thinking' })
+    }
     if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
       events.push({ type: 'text', text: event.delta.text || '' })
+    }
+    if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+      events.push({ type: 'thinking', index: event.index, text: event.delta.thinking || '' })
     }
     if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
       events.push({ type: 'activity', activity: toolActivity(event.content_block) })
@@ -59,10 +68,16 @@ export function parseClaudeEvent(payload) {
   if (payload.type === 'assistant') {
     const blocks = payload.message?.content || []
     const text = blocks.filter((block) => block.type === 'text').map((block) => block.text).join('')
-    if (text) events.push({ type: 'full-text', text })
-    for (const block of blocks.filter((item) => item.type === 'tool_use')) {
-      events.push({ type: 'activity', activity: toolActivity(block) })
+    for (const [index, block] of blocks.entries()) {
+      if (block.type === 'thinking') {
+        events.push({ type: 'full-thinking', messageId: payload.message?.id || '', index, text: block.thinking || '', hidden: false })
+      }
+      if (block.type === 'redacted_thinking') {
+        events.push({ type: 'full-thinking', messageId: payload.message?.id || '', index, text: '', hidden: true })
+      }
+      if (block.type === 'tool_use') events.push({ type: 'activity', activity: toolActivity(block) })
     }
+    if (text) events.push({ type: 'full-text', text })
     const tokens = contextTokens(payload.message?.usage)
     if (tokens) events.push({ type: 'usage', tokens, estimated: false })
   }
@@ -95,6 +110,10 @@ export function parseClaudeEvent(payload) {
 
 export function mergeActivity(activities, incoming) {
   const existing = activities.find((item) => item.id === incoming.id)
-  if (existing) Object.assign(existing, incoming)
-  else activities.push(incoming)
+  if (existing) {
+    Object.assign(existing, incoming)
+    return existing
+  }
+  activities.push(incoming)
+  return incoming
 }

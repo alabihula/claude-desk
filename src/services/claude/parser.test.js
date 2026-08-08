@@ -10,6 +10,24 @@ describe('parseClaudeEvent', () => {
     expect(events).toEqual([{ type: 'text', text: 'Hello' }])
   })
 
+  it('parses streamed and completed thinking summaries separately from final text', () => {
+    expect(parseClaudeEvent({
+      type: 'stream_event',
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking' } },
+    })).toEqual([{ type: 'thinking-start', index: 0, hidden: false }])
+    expect(parseClaudeEvent({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Inspect the project.' } },
+    })).toEqual([{ type: 'thinking', index: 0, text: 'Inspect the project.' }])
+
+    const events = parseClaudeEvent({
+      type: 'assistant',
+      message: { id: 'message-1', content: [{ type: 'thinking', thinking: 'Inspect the project.' }, { type: 'text', text: 'Done.' }] },
+    })
+    expect(events).toContainEqual({ type: 'full-thinking', messageId: 'message-1', index: 0, text: 'Inspect the project.', hidden: false })
+    expect(events).toContainEqual({ type: 'full-text', text: 'Done.' })
+  })
+
   it('turns tool use and result events into readable activity state', () => {
     const start = parseClaudeEvent({
       type: 'stream_event',

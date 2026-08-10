@@ -1,5 +1,6 @@
+use crate::context;
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::{AppHandle, Manager};
@@ -26,6 +27,17 @@ pub struct Conversation {
     pub created_at: String,
     pub updated_at: String,
     pub last_opened_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextStats {
+    pub conversation_id: String,
+    pub tokens: i64,
+    pub window: i64,
+    pub cumulative_tokens: i64,
+    pub source: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,6 +127,14 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
             );
             CREATE INDEX IF NOT EXISTS messages_conversation_idx
               ON messages(conversation_id, created_at);
+            CREATE TABLE IF NOT EXISTS conversation_context (
+              conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+              tokens INTEGER NOT NULL DEFAULT 0,
+              context_window INTEGER NOT NULL DEFAULT 0,
+              cumulative_tokens INTEGER NOT NULL DEFAULT 0,
+              source TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS attachments (
               id TEXT PRIMARY KEY,
               conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -381,6 +401,85 @@ pub fn reorder_conversations(
             .map_err(|error| error.to_string())?;
     }
     transaction.commit().map_err(|error| error.to_string())
+}
+
+fn context_stats(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Option<ContextStats>, String> {
+    connection
+        .query_row(
+            "SELECT conversation_id, tokens, context_window, cumulative_tokens, source, updated_at FROM conversation_context WHERE conversation_id = ?1",
+            [conversation_id],
+            |row| {
+                Ok(ContextStats {
+                    conversation_id: row.get(0)?,
+                    tokens: row.get(1)?,
+                    window: row.get(2)?,
+                    cumulative_tokens: row.get(3)?,
+                    source: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())
+}
+
+pub fn save_context_stats(app: &AppHandle, stats: &ContextStats) -> Result<(), String> {
+    connect(app)?
+        .execute(
+            "INSERT INTO conversation_context (conversation_id, tokens, context_window, cumulative_tokens, source, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(conversation_id) DO UPDATE SET tokens = excluded.tokens, context_window = excluded.context_window, cumulative_tokens = excluded.cumulative_tokens, source = excluded.source, updated_at = excluded.updated_at",
+            params![stats.conversation_id, stats.tokens, stats.window, stats.cumulative_tokens, stats.source, stats.updated_at],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn load_context_stats(
+    app: AppHandle,
+    conversation_id: String,
+) -> Result<Option<ContextStats>, String> {
+    context_stats(&connect(&app)?, &conversation_id)
+}
+
+#[tauri::command]
+pub fn refresh_context_stats(
+    app: AppHandle,
+    conversation_id: String,
+) -> Result<Option<ContextStats>, String> {
+    let connection = connect(&app)?;
+    let session_id = connection
+        .query_row(
+            "SELECT claude_session_id FROM conversations WHERE id = ?1",
+            [&conversation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(session_id) = session_id else {
+        return Ok(None);
+    };
+    let existing = context_stats(&connection, &conversation_id)?;
+    let home_dir = app.path().home_dir().map_err(|error| error.to_string())?;
+    let config_dir = context::default_config_dir(home_dir);
+    let Some(tokens) = context::latest_session_usage(&config_dir, &session_id)? else {
+        return Ok(existing);
+    };
+    let stats = ContextStats {
+        conversation_id,
+        tokens,
+        window: existing.as_ref().map(|item| item.window).unwrap_or(0),
+        cumulative_tokens: existing
+            .as_ref()
+            .map(|item| item.cumulative_tokens)
+            .unwrap_or(0),
+        source: "claude-transcript".into(),
+        updated_at: now(),
+    };
+    save_context_stats(&app, &stats)?;
+    Ok(Some(stats))
 }
 
 #[tauri::command]

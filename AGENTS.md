@@ -23,8 +23,10 @@ Do not combine rendering, filesystem access, data conversion, and process contro
 - Claude runs through structured `stream-json` input/output. Preserve partial-message streaming and structured interrupt requests.
 - Supplemental messages are queued per conversation. Normal completion dispatches FIFO; “立即调整” interrupts the current turn and resumes the same Claude session with the selected message first.
 - Stop and steer are different actions. Stop must not silently dispatch queued messages.
+- A Claude `result` frame means the model has answered, not that its child process has exited. Keep the UI in a finishing state until the backend emits `exit`.
 - Local download cards may only resolve existing files inside the active project after canonical path validation in Rust. Never trust a model-produced path in the webview alone.
 - Attachments are app-owned copies under Application Support and are linked to messages in SQLite.
+- Requests to start development services must use a macOS launchd user job and verify the target port before reporting success; ordinary Claude Code background tasks do not provide persistence across session cleanup.
 - Settings apply to the next Claude process; avoid requiring an app restart unless a platform-level setting truly needs it.
 
 ## Implementation rules

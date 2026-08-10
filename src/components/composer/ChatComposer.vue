@@ -1,15 +1,17 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowUp, File, Paperclip, Square, X } from 'lucide-vue-next'
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { clipboardImageFromEvent } from '../../services/attachments'
 import { shouldSubmitComposer } from '../../services/composerKeyboard'
 import { resizeComposerTextarea } from '../../services/composerTextarea'
+import { matchingSkills, slashSkillQuery } from '../../services/skills'
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
 import QueuedMessages from './QueuedMessages.vue'
+import SlashSkillMenu from './SlashSkillMenu.vue'
 import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
@@ -19,6 +21,13 @@ const attachments = ref([])
 const input = ref(null)
 const adding = ref(false)
 const composition = { composing: false, compositionEndedAt: -Infinity }
+const activeConversationId = computed(() => store.activeConversationId)
+const skills = ref([])
+const skillIndex = ref(0)
+const skillMenuDismissed = ref(false)
+const skillQuery = computed(() => slashSkillQuery(text.value))
+const visibleSkills = computed(() => matchingSkills(skills.value, skillQuery.value))
+const skillMenuOpen = computed(() => skillQuery.value !== null && !skillMenuDismissed.value && visibleSkills.value.length > 0)
 
 async function addPaths(paths) {
   if (!store.activeConversationId || !paths?.length) return
@@ -44,15 +53,50 @@ async function onPaste(event) {
 
 async function send() {
   if (!text.value.trim() && !attachments.value.length) return
+  const conversationId = store.activeConversationId
   const outgoing = attachments.value
   const content = text.value
   text.value = ''
   attachments.value = []
+  store.setDraft(conversationId, '')
   await store.sendMessage(content, outgoing)
 }
 
 function keydown(event) {
+  if (handleSkillKeydown(event)) return
   if (shouldSubmitComposer(event, composition)) { event.preventDefault(); send() }
+}
+
+function handleSkillKeydown(event) {
+  if (!skillMenuOpen.value || event.isComposing || event.keyCode === 229) return false
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    skillIndex.value = (skillIndex.value + 1) % visibleSkills.value.length
+    return true
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    skillIndex.value = (skillIndex.value + visibleSkills.value.length - 1) % visibleSkills.value.length
+    return true
+  }
+  if (event.key === 'Enter' || event.key === 'Tab') {
+    event.preventDefault()
+    chooseSkill(visibleSkills.value[skillIndex.value])
+    return true
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    skillMenuDismissed.value = true
+    return true
+  }
+  return false
+}
+
+function chooseSkill(skill) {
+  if (!skill) return
+  text.value = `/${skill.name} `
+  skillIndex.value = 0
+  nextTick(focus)
 }
 
 function compositionStart() { composition.composing = true }
@@ -70,7 +114,26 @@ function activateQueued(messageId) {
 function removeQueued(messageId) {
   if (store.activeConversationId) store.removeQueuedMessage(store.activeConversationId, messageId)
 }
-watch(text, () => nextTick(resizeInput))
+async function loadSkills() {
+  if (!store.activeProject?.path) {
+    skills.value = []
+    return
+  }
+  try { skills.value = await desktop.listClaudeSkills(store.activeProject.path) }
+  catch { skills.value = [] }
+}
+watch(text, (value) => {
+  store.setDraft(activeConversationId.value, value)
+  skillIndex.value = 0
+  skillMenuDismissed.value = false
+  nextTick(resizeInput)
+})
+watch(activeConversationId, (next, previous) => {
+  if (previous && previous !== next) store.setDraft(previous, text.value)
+  text.value = next ? store.drafts[next] || '' : ''
+  nextTick(resizeInput)
+}, { immediate: true })
+watch(() => store.activeProject?.path, loadSkills, { immediate: true })
 onMounted(() => {
   window.addEventListener('claude-desk-drop', dropped)
   window.addEventListener('claude-desk-focus', focus)
@@ -78,6 +141,7 @@ onMounted(() => {
   resizeInput()
 })
 onBeforeUnmount(() => {
+  store.setDraft(activeConversationId.value, text.value)
   window.removeEventListener('claude-desk-drop', dropped)
   window.removeEventListener('claude-desk-focus', focus)
   window.removeEventListener('resize', resizeInput)
@@ -101,6 +165,7 @@ onBeforeUnmount(() => {
           <button :title="t('composer.removeAttachment')" @click="attachments.splice(index, 1)"><X :size="13" /></button>
         </div>
       </div>
+      <SlashSkillMenu :skills="skillMenuOpen ? visibleSkills : []" :active-index="skillIndex" @select="chooseSkill" />
       <textarea
         ref="input"
         v-model="text"

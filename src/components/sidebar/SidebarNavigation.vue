@@ -246,7 +246,7 @@ onBeforeUnmount(cleanupPointerSort)
             @keydown.esc.stop.prevent="emit('cancel-rename')"
             @blur="emit('commit-rename')"
           />
-          <span v-else>{{ conversationTitle(conversation.title) }}</span>
+          <span v-else class="sidebar-item-label" :title="conversation.title">{{ conversationTitle(conversation.title) }}</span>
           <span v-if="store.runs[conversation.id]" class="run-dot"></span>
           <button class="row-action" :title="t('sidebar.conversationActions')" @click.stop="emit('conversation-menu', { event: $event, item: conversation })"><MoreHorizontal :size="15" /></button>
         </div>
@@ -306,7 +306,7 @@ onBeforeUnmount(cleanupPointerSort)
               @keydown.esc.stop.prevent="emit('cancel-rename')"
               @blur="emit('commit-rename')"
             />
-            <span v-else>{{ conversationTitle(conversation.title) }}</span>
+            <span v-else class="sidebar-item-label" :title="conversation.title">{{ conversationTitle(conversation.title) }}</span>
             <span v-if="store.runs[conversation.id]" class="run-dot"></span>
             <button class="row-action" :title="t('sidebar.conversationActions')" @click.stop="emit('conversation-menu', { event: $event, item: conversation })"><MoreHorizontal :size="15" /></button>
           </div>

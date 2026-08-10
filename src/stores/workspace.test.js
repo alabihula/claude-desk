@@ -14,6 +14,7 @@ vi.mock('../services/desktop', () => ({
     reorderConversations: vi.fn(),
     saveSettings: vi.fn(),
     touchProject: vi.fn(),
+    refreshContextStats: vi.fn(),
     listConversations: vi.fn(),
     gitStatus: vi.fn(),
     renameConversation: vi.fn(),
@@ -61,6 +62,7 @@ describe('workspace supplemental messages', () => {
     desktop.interruptClaude.mockResolvedValue()
     desktop.listConversations.mockResolvedValue([])
     desktop.gitStatus.mockResolvedValue([])
+    desktop.refreshContextStats.mockResolvedValue(null)
   })
 
   it('queues new input without persisting it while Claude is running', async () => {
@@ -107,6 +109,57 @@ describe('workspace supplemental messages', () => {
       resume: true,
       prompt: '继续检查边界条件',
     }))
+  })
+
+  it('waits for the process exit before declaring a successful result complete', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: { type: 'result', result: '已完成', is_error: false, usage: { input_tokens: 634000 }, modelUsage: { model: { contextWindow: 200000 } } },
+    })
+
+    expect(store.activeRun.status).toBe('finishing')
+    expect(store.activeContext.measured).toBe(false)
+    expect(store.activeContext.cumulativeTokens).toBe(634000)
+
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: true } })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeMessages.at(-1)).toMatchObject({ role: 'assistant', content: '已完成' })
+  })
+
+  it('uses transcript-backed context usage when the provider stream reports zero usage', () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'context',
+      data: {
+        tokens: 76304,
+        window: 200000,
+        cumulativeTokens: 76032,
+        source: 'claude-transcript',
+      },
+    })
+
+    expect(store.activeContext).toMatchObject({
+      tokens: 76304,
+      window: 200000,
+      measured: true,
+      percentage: 38,
+      cumulativeTokens: 76032,
+    })
+  })
+
+  it('keeps a draft scoped to its conversation until it is submitted or cleared', () => {
+    const store = setupStore()
+
+    store.setDraft('conversation-1', '先别丢这段内容')
+    store.setDraft('conversation-2', '另一段草稿')
+    store.setDraft('conversation-1', '')
+
+    expect(store.drafts).toEqual({ 'conversation-2': '另一段草稿' })
   })
 
   it('keeps queued supplements paused after an explicit stop', async () => {

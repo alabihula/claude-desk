@@ -1,8 +1,10 @@
 mod claude;
 mod config;
+mod context;
 mod data;
 mod files;
 mod git;
+mod skills;
 
 use claude::ClaudeProcesses;
 
@@ -29,6 +31,8 @@ pub fn run() {
             data::touch_conversation,
             data::delete_conversation,
             data::reorder_conversations,
+            data::load_context_stats,
+            data::refresh_context_stats,
             data::list_messages,
             data::save_message,
             data::list_attachments,
@@ -47,6 +51,7 @@ pub fn run() {
             files::open_terminal,
             git::git_status,
             git::git_diff,
+            skills::list_claude_skills,
             claude::check_claude,
             claude::send_claude,
             claude::interrupt_claude,

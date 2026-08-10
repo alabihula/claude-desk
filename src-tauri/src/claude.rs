@@ -1,3 +1,5 @@
+use crate::{context, data};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -11,6 +13,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{ChildStdin, Command},
     sync::Mutex as AsyncMutex,
+    time::{sleep, Duration},
 };
 use uuid::Uuid;
 
@@ -192,6 +195,15 @@ pub async fn send_claude(
     if let Some(custom) = &request.env {
         environment.extend(custom.clone());
     }
+    let context_config_dir = environment
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            app.path()
+                .home_dir()
+                .map(context::default_config_dir)
+                .unwrap_or_else(|_| PathBuf::from(".claude"))
+        });
     let command_name = request
         .command
         .clone()
@@ -308,6 +320,7 @@ pub async fn send_claude(
 
     let app_for_task = app.clone();
     let conversation_id = request.conversation_id.clone();
+    let session_id = request.session_id.clone();
     let run_for_task = run_id.clone();
     let input_for_task = input.clone();
     tauri::async_runtime::spawn(async move {
@@ -322,16 +335,22 @@ pub async fn send_claude(
         let mut stderr_lines = BufReader::new(stderr).lines();
         let mut stdout_done = false;
         let mut stderr_done = false;
+        let mut context_window = 0;
+        let mut cumulative_tokens = 0;
         while !stdout_done || !stderr_done {
             tokio::select! {
                 line = stdout_lines.next_line(), if !stdout_done => match line {
                     Ok(Some(line)) => {
-                        let data = serde_json::from_str(&line).unwrap_or_else(|_| serde_json::json!({ "text": line }));
-                        let is_result = data.get("type").and_then(Value::as_str) == Some("result");
+                        let payload = serde_json::from_str(&line).unwrap_or_else(|_| serde_json::json!({ "text": line }));
+                        let is_result = payload.get("type").and_then(Value::as_str) == Some("result");
+                        if is_result {
+                            context_window = context::context_window(payload.get("modelUsage"));
+                            cumulative_tokens = context::usage_tokens(payload.get("usage"));
+                        }
                         // Successful control responses can contain a large capability payload
                         // that the UI does not render. Only forward normal Claude events.
-                        if data.get("type").and_then(Value::as_str) != Some("control_response") {
-                            emit(&app_for_task, &conversation_id, &run_for_task, "stream", data);
+                        if payload.get("type").and_then(Value::as_str) != Some("control_response") {
+                            emit(&app_for_task, &conversation_id, &run_for_task, "stream", payload);
                         }
                         if is_result {
                             close_input(&input_for_task).await;
@@ -348,6 +367,49 @@ pub async fn send_claude(
             }
         }
         let status = child.wait().await;
+        let mut context_stats = None;
+        for attempt in 0..3 {
+            match context::latest_session_usage(&context_config_dir, &session_id) {
+                Ok(Some(tokens)) => {
+                    let stats = data::ContextStats {
+                        conversation_id: conversation_id.clone(),
+                        tokens,
+                        window: context_window,
+                        cumulative_tokens,
+                        source: "claude-transcript".into(),
+                        updated_at: Utc::now().to_rfc3339(),
+                    };
+                    if data::save_context_stats(&app_for_task, &stats).is_ok() {
+                        context_stats = Some(stats);
+                    }
+                    break;
+                }
+                Ok(None) if attempt < 2 => sleep(Duration::from_millis(100)).await,
+                Ok(None) | Err(_) => break,
+            }
+        }
+        if context_stats.is_none() && (context_window > 0 || cumulative_tokens > 0) {
+            let stats = data::ContextStats {
+                conversation_id: conversation_id.clone(),
+                tokens: 0,
+                window: context_window,
+                cumulative_tokens,
+                source: "provider-cumulative".into(),
+                updated_at: Utc::now().to_rfc3339(),
+            };
+            if data::save_context_stats(&app_for_task, &stats).is_ok() {
+                context_stats = Some(stats);
+            }
+        }
+        if let Some(stats) = context_stats {
+            emit(
+                &app_for_task,
+                &conversation_id,
+                &run_for_task,
+                "context",
+                serde_json::to_value(stats).unwrap_or_else(|_| serde_json::json!({})),
+            );
+        }
         if let Some(state) = app_for_task.try_state::<ClaudeProcesses>() {
             if let Ok(mut running) = state.running.lock() {
                 running.remove(&conversation_id);

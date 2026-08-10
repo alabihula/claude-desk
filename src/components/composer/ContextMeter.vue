@@ -14,6 +14,7 @@ const label = computed(() => {
   if (store.activeRun?.operation === 'compact') return t('context.compacting')
   if (context.value.measured && context.value.window) return t('context.percent', { value: `${context.value.estimated ? '~' : ''}${context.value.percentage}` })
   if (context.value.measured) return t('context.tokens', { value: `${context.value.estimated ? '~' : ''}${tokens(context.value.tokens)}` })
+  if (context.value.cumulativeTokens) return t('context.cumulativeLabel', { value: tokens(context.value.cumulativeTokens) })
   if (context.value.lastCompactedAt) return t('context.compacted')
   return t(context.value.autoCompact ? 'context.auto' : 'context.off')
 })
@@ -50,6 +51,7 @@ async function compact() {
         <p>{{ t('context.usageWindow', { approx: context.estimated ? t('context.approximately') : '', used: tokens(context.tokens), total: tokens(context.window) }) }}</p>
       </template>
       <p v-else-if="context.measured">{{ t('context.usage', { approx: context.estimated ? t('context.approximately') : '', used: tokens(context.tokens) }) }}</p>
+      <p v-else-if="context.cumulativeTokens">{{ t('context.cumulative', { value: tokens(context.cumulativeTokens) }) }}</p>
       <p v-else>{{ t('context.afterResponse') }}</p>
       <button :disabled="!canCompact" @click="compact"><Minimize2 :size="14" /> {{ t('context.compactNow') }}</button>
     </div>

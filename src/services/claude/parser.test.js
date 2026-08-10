@@ -61,7 +61,7 @@ describe('parseClaudeEvent', () => {
       modelUsage: { model: { contextWindow: 200000 } },
     })
     expect(result.contextWindow).toBe(200000)
-    expect(result.tokens).toBe(1000)
+    expect(result.cumulativeTokens).toBe(1000)
   })
 })
 

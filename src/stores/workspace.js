@@ -5,6 +5,7 @@ import { attachmentPrompt } from '../services/attachments'
 import { preferredChange } from '../services/changes'
 import { parseClaudeEvent } from '../services/claude/parser'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
+import { withRuntimeGuidance } from '../services/claude/runtime'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 
@@ -59,6 +60,18 @@ function newRun(operation = 'chat', context = null) {
   }
 }
 
+function storedContext(stats) {
+  if (!stats) return null
+  return {
+    tokens: Number(stats.tokens || 0),
+    window: Number(stats.window || 0),
+    cumulativeTokens: Number(stats.cumulativeTokens || 0),
+    measured: stats.source === 'claude-transcript',
+    source: stats.source || '',
+    lastCompactedAt: stats.lastCompactedAt || null,
+  }
+}
+
 export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
     projects: [],
@@ -77,6 +90,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     health: null,
     runs: {},
     queuedMessages: {},
+    drafts: {},
     changes: {},
     loading: true,
     error: '',
@@ -103,13 +117,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       const env = this.claudeSettings?.env || {}
       const current = state.runs[state.activeConversationId]?.context || state.contextStats[state.activeConversationId] || {}
       const window = Number(current.window || env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || 0)
-      const tokens = Number(current.tokens || 0)
+      const reportedTokens = Number(current.tokens || 0)
+      // Older Claude Desk versions stored result-level cumulative usage as an
+      // estimated context value. Keep it visible as cumulative data, never as a
+      // percentage of a single model window.
+      const cumulativeTokens = Number(current.cumulativeTokens || (current.estimated ? reportedTokens : 0))
+      const measured = Boolean((current.measured || current.source === 'claude-transcript') && !current.estimated && reportedTokens && (!window || reportedTokens <= window))
       return {
-        tokens,
+        tokens: measured ? reportedTokens : 0,
         window,
-        measured: Boolean(current.measured && tokens),
-        estimated: Boolean(current.estimated),
-        percentage: window ? Math.min(100, Math.round((tokens / window) * 100)) : 0,
+        measured,
+        estimated: false,
+        cumulativeTokens,
+        source: current.source || '',
+        percentage: measured && window ? Math.round((reportedTokens / window) * 100) : 0,
         autoCompact: env.DISABLE_AUTO_COMPACT !== '1',
         threshold: Number(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || 95),
         lastCompactedAt: current.lastCompactedAt || null,
@@ -229,10 +250,23 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeConversationId = conversation.id
     },
 
+    setDraft(conversationId, content) {
+      if (!conversationId) return
+      const draft = String(content || '')
+      if (draft) this.drafts[conversationId] = draft
+      else delete this.drafts[conversationId]
+    },
+
     async selectConversation(id) {
       this.activeConversationId = id
       this.workspaceView = 'conversation'
       await desktop.touchConversation(id)
+      try {
+        const context = await desktop.refreshContextStats(id)
+        if (context) this.contextStats[id] = storedContext(context)
+      } catch {
+        // Context telemetry is optional and must not block opening a conversation.
+      }
       if (!this.messages[id]) {
         const [messages, attachments] = await Promise.all([desktop.listMessages(id), desktop.listAttachments(id)])
         this.messages[id] = messages
@@ -263,6 +297,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       for (const message of this.messages[conversation.id] || []) delete this.attachmentsByMessage[message.id]
       delete this.messages[conversation.id]
       delete this.queuedMessages[conversation.id]
+      delete this.drafts[conversation.id]
       if (this.activeConversationId === conversation.id) {
         this.activeConversationId = null
         if (this.conversations[0]) await this.selectConversation(this.conversations[0].id)
@@ -341,7 +376,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           conversationId: queued.conversationId,
           sessionId: queued.sessionId,
           projectPath: queued.projectPath,
-          prompt: attachmentPrompt(content, queued.attachments),
+          prompt: withRuntimeGuidance(attachmentPrompt(content, queued.attachments)),
           resume: hasPreviousUserMessage,
           command: this.settings.command,
           args: this.settings.args,
@@ -409,6 +444,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!run || (run.runId && run.runId !== payload.runId)) return
       if (payload.kind === 'started' && run.status === 'starting') run.status = 'running'
       if (payload.kind === 'stderr') run.error = payload.data?.message || ''
+      if (payload.kind === 'context') {
+        const context = storedContext(payload.data)
+        if (context) Object.assign(run.context, context)
+      }
       if (payload.kind === 'error') {
         if (run.status !== 'steering' && run.status !== 'stopping') {
           run.status = 'error'
@@ -420,25 +459,29 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (applyRunTimelineEvent(run, event)) continue
           if (event.type === 'text') { run.content += event.text; run.sawPartialText = true }
           if (event.type === 'full-text' && !run.sawPartialText && !run.content) run.content = event.text
-          if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: event.estimated })
+          if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
           if (event.type === 'result') {
             if (!run.content && event.text) run.content = event.text
-            if (!run.context.measured && event.tokens) Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: true })
+            if (event.cumulativeTokens) run.context.cumulativeTokens = event.cumulativeTokens
             if (event.contextWindow) run.context.window = event.contextWindow
             if (event.permissionDenials.length) run.permissionDenied = true
             if (event.error) {
               if (run.status !== 'stopping' && run.status !== 'steering') { run.status = 'error'; run.error = event.errorMessage }
-            } else run.status = 'complete'
+            } else if (run.status !== 'stopping' && run.status !== 'steering') run.status = 'finishing'
           }
         }
       }
       if (payload.kind === 'exit') {
-        const shouldContinue = run.status === 'complete' || run.status === 'steering'
+        let shouldContinue = false
         if (run.status === 'steering') run.status = 'interrupted'
         else if (!payload.data?.success && run.status !== 'stopping' && run.status !== 'error') {
           run.status = 'error'
           run.error ||= 'Claude exited before completing the response.'
-        } else if (run.status !== 'error') run.status = run.status === 'stopping' ? 'stopped' : 'complete'
+        } else if (run.status !== 'error') {
+          run.status = run.status === 'stopping' ? 'stopped' : 'complete'
+          shouldContinue = run.status === 'complete'
+        }
+        if (run.status === 'interrupted') shouldContinue = true
         this.finishRun(payload.conversationId, shouldContinue)
       }
     },
@@ -457,7 +500,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (run.context.measured || run.context.window) this.contextStats[conversationId] = { ...run.context }
       if (run.operation === 'compact' && run.status === 'complete') {
         const compactedAt = new Date().toISOString()
-        this.contextStats[conversationId] = { tokens: 0, window: run.context.window, measured: false, lastCompactedAt: compactedAt }
+        this.contextStats[conversationId] = { ...run.context, lastCompactedAt: compactedAt }
         try {
           const message = await desktop.saveMessage(conversationId, 'system', 'Context compacted manually · Full transcript remains available')
           ;(this.messages[conversationId] ||= []).push(message)

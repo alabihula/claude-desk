@@ -1,6 +1,6 @@
 [package]
 name = "claude-desk"
-version = "0.1.8"
+version = "0.1.15"
 description = "A focused desktop client for Claude Code"
 authors = ["Claude Desk"]
 edition = "2021"
@@ -18,7 +18,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "io-util", "sync", "macros"] }
+tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "time"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }

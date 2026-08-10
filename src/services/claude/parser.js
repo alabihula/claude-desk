@@ -91,9 +91,10 @@ export function parseClaudeEvent(payload) {
   }
 
   if (payload.type === 'result') {
-    // Some compatible gateways omit assistant-level usage. The result total is a
-    // useful fallback, but can include multiple internal model turns.
-    const tokens = contextTokens(payload.usage)
+    // Result usage is the total for a whole Claude Code run. Compatible gateways
+    // often aggregate several internal turns here, so it must never be presented
+    // as the current model-context size.
+    const cumulativeTokens = contextTokens(payload.usage)
     events.push({
       type: 'result',
       text: typeof payload.result === 'string' ? payload.result : '',
@@ -101,7 +102,7 @@ export function parseClaudeEvent(payload) {
       errorMessage: payload.error || payload.result || '',
       permissionDenials: Array.isArray(payload.permission_denials) ? payload.permission_denials : [],
       contextWindow: contextWindow(payload.modelUsage),
-      tokens,
+      cumulativeTokens,
     })
   }
 

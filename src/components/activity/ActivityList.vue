@@ -15,11 +15,12 @@ const entries = computed(() => props.run.timeline?.length
 
 <template>
   <section class="activity-block">
-    <div class="working-line" :class="{ pulse: ['starting', 'running', 'stopping'].includes(run.status) }">
+    <div class="working-line" :class="{ pulse: ['starting', 'running', 'finishing', 'stopping'].includes(run.status) }">
       <span class="sparkle">✦</span>
       <span v-if="run.operation === 'compact' && ['starting', 'running'].includes(run.status)">{{ t('activity.compacting') }}</span>
       <span v-else-if="run.status === 'starting'">{{ t('activity.starting') }}</span>
       <span v-else-if="run.status === 'stopping'">{{ t('activity.stopping') }}</span>
+      <span v-else-if="run.status === 'finishing'">{{ t('activity.finishing') }}</span>
       <span v-else-if="run.status === 'error'">{{ t('activity.error') }}</span>
       <span v-else-if="run.status === 'complete'">{{ t('activity.done') }}</span>
       <span v-else>{{ t('activity.working') }}</span>

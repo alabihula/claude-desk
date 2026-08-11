@@ -52,7 +52,8 @@ jobs:
             Select-Object -First 1
           if (-not $uninstall.InstallLocation) { throw "Claude Desk installation was not registered" }
 
-          $app = Get-ChildItem $uninstall.InstallLocation -Filter "claude-desk.exe" -Recurse | Select-Object -First 1
+          $installLocation = $uninstall.InstallLocation.Trim('"')
+          $app = Get-ChildItem $installLocation -Filter "claude-desk.exe" -Recurse | Select-Object -First 1
           if (-not $app) { throw "Installed Claude Desk executable was not found" }
           $process = Start-Process -FilePath $app.FullName -PassThru
           Start-Sleep -Seconds 5

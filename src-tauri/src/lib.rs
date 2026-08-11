@@ -4,6 +4,7 @@ mod context;
 mod data;
 mod files;
 mod git;
+mod platform;
 mod skills;
 
 use claude::ClaudeProcesses;

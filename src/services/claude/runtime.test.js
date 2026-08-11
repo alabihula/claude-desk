@@ -7,9 +7,10 @@ describe('persistent service runtime guidance', () => {
     expect(requestsPersistentService('新建一个 class-css 分支')).toBe(false)
   })
 
-  it('adds a macOS persistence contract to service-start requests', () => {
+  it('adds a cross-platform persistence contract to service-start requests', () => {
     const prompt = withRuntimeGuidance('帮我启动这个工程的前端和后端服务')
-    expect(prompt).toContain('launchctl submit')
+    expect(prompt).toContain('launchd')
+    expect(prompt).toContain('PowerShell Start-Process')
     expect(prompt).toContain('configured port or health endpoint')
     expect(requestsPersistentService('cd frontend && pnpm dev')).toBe(true)
   })

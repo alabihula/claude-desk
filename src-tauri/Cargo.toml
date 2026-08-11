@@ -1,6 +1,6 @@
 [package]
 name = "claude-desk"
-version = "0.1.17"
+version = "0.1.18"
 description = "A focused desktop client for Claude Code"
 authors = ["Claude Desk"]
 edition = "2021"
@@ -23,4 +23,6 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "6"
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"

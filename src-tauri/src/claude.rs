@@ -1,4 +1,4 @@
-use crate::{context, data};
+use crate::{context, data, platform};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,7 +11,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{ChildStdin, Command},
+    process::ChildStdin,
     sync::Mutex as AsyncMutex,
     time::{sleep, Duration},
 };
@@ -62,41 +62,6 @@ pub struct ClaudeHealth {
     error: Option<String>,
 }
 
-async fn login_environment() -> HashMap<String, String> {
-    let mut environment = std::env::vars().collect::<HashMap<_, _>>();
-    // GUI apps do not inherit terminal startup files. Interactive mode also
-    // loads .zshrc, where tools such as NVM commonly add Claude to PATH.
-    let output = Command::new("/bin/zsh")
-        .args(["-l", "-i", "-c", "command /usr/bin/env -0"])
-        .output()
-        .await;
-    if let Ok(output) = output {
-        for item in output.stdout.split(|byte| *byte == 0) {
-            if let Some(position) = item.iter().position(|byte| *byte == b'=') {
-                if let (Ok(key), Ok(value)) = (
-                    String::from_utf8(item[..position].to_vec()),
-                    String::from_utf8(item[position + 1..].to_vec()),
-                ) {
-                    environment.insert(key, value);
-                }
-            }
-        }
-    }
-    environment
-}
-
-fn resolve_command(command: &str, environment: &HashMap<String, String>) -> Option<PathBuf> {
-    let path = PathBuf::from(command);
-    if path.components().count() > 1 && path.is_file() {
-        return Some(path);
-    }
-    environment
-        .get("PATH")?
-        .split(':')
-        .map(|directory| Path::new(directory).join(command))
-        .find(|candidate| candidate.is_file())
-}
-
 #[tauri::command]
 pub async fn check_claude(
     command: Option<String>,
@@ -105,22 +70,23 @@ pub async fn check_claude(
     let command = command
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "claude".into());
-    let mut environment = login_environment().await;
+    let mut environment = platform::login_environment().await;
     if let Some(custom) = env {
         environment.extend(custom);
     }
     let detected_path = environment.get("PATH").cloned().unwrap_or_default();
-    let Some(resolved) = resolve_command(&command, &environment) else {
+    let Some(resolved) = platform::resolve_command(&command, &environment) else {
         return Ok(ClaudeHealth {
             available: false,
             command,
             resolved_path: None,
             version: None,
             detected_path,
-            error: Some("Claude Code command was not found in the login shell PATH".into()),
+            error: Some("Claude Code command was not found in the detected PATH".into()),
         });
     };
-    let output = Command::new(&resolved)
+    let output = resolved
+        .command()
         .arg("--version")
         .envs(&environment)
         .output()
@@ -132,7 +98,7 @@ pub async fn check_claude(
     Ok(ClaudeHealth {
         available,
         command,
-        resolved_path: Some(resolved.to_string_lossy().to_string()),
+        resolved_path: Some(resolved.path().to_string_lossy().to_string()),
         version,
         detected_path,
         error,
@@ -191,7 +157,7 @@ pub async fn send_claude(
         }
     }
 
-    let mut environment = login_environment().await;
+    let mut environment = platform::login_environment().await;
     if let Some(custom) = &request.env {
         environment.extend(custom.clone());
     }
@@ -209,7 +175,7 @@ pub async fn send_claude(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "claude".into());
-    let resolved = resolve_command(&command_name, &environment).ok_or_else(|| {
+    let resolved = platform::resolve_command(&command_name, &environment).ok_or_else(|| {
         format!(
             "Claude Code not found: `{command_name}`. Detected PATH: {}",
             environment.get("PATH").cloned().unwrap_or_default()
@@ -232,7 +198,7 @@ pub async fn send_claude(
         return Err("Unsupported Claude permission mode".into());
     }
 
-    let mut command = Command::new(resolved);
+    let mut command = resolved.command();
     command
         .current_dir(&request.project_path)
         .envs(&environment)
@@ -473,11 +439,5 @@ pub fn stop_claude(
     let Some(process) = running.get(&conversation_id) else {
         return Ok(());
     };
-    #[cfg(unix)]
-    unsafe {
-        if libc::kill(-(process.pid as i32), libc::SIGINT) != 0 {
-            return Err(format!("Could not stop Claude run {}", process.run_id));
-        }
-    }
-    Ok(())
+    platform::stop_process_tree(process.pid, &process.run_id)
 }

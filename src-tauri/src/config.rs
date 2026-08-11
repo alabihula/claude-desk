@@ -38,6 +38,16 @@ fn settings_file(path: PathBuf) -> Result<ClaudeSettingsFile, String> {
     })
 }
 
+fn replace_settings_file(temporary: &PathBuf, path: &PathBuf) -> Result<(), String> {
+    #[cfg(windows)]
+    if path.exists() {
+        // Windows rename does not replace an existing destination. The original
+        // file is already preserved in settings.json.claude-desk.bak above.
+        fs::remove_file(path).map_err(|error| error.to_string())?;
+    }
+    fs::rename(temporary, path).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub fn load_claude_settings(app: AppHandle) -> Result<ClaudeSettingsFile, String> {
     settings_file(settings_path(&app)?)
@@ -82,7 +92,7 @@ pub fn save_claude_settings(app: AppHandle, content: String) -> Result<ClaudeSet
     file.write_all(normalized.as_bytes())
         .map_err(|error| error.to_string())?;
     file.sync_all().map_err(|error| error.to_string())?;
-    fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    replace_settings_file(&temporary, &path)?;
     #[cfg(unix)]
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
         .map_err(|error| error.to_string())?;

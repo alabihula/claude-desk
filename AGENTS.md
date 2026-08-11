@@ -26,7 +26,7 @@ Do not combine rendering, filesystem access, data conversion, and process contro
 - A Claude `result` frame means the model has answered, not that its child process has exited. Keep the UI in a finishing state until the backend emits `exit`.
 - Local download cards may only resolve existing files inside the active project after canonical path validation in Rust. Never trust a model-produced path in the webview alone.
 - Attachments are app-owned copies under Application Support and are linked to messages in SQLite.
-- Requests to start development services must use a macOS launchd user job and verify the target port before reporting success; ordinary Claude Code background tasks do not provide persistence across session cleanup.
+- Requests to start development services must use a platform-native detached process (`launchd` on macOS, detached PowerShell `Start-Process` on Windows) and verify the target port before reporting success; ordinary Claude Code background tasks do not provide persistence across session cleanup.
 - Settings apply to the next Claude process; avoid requiring an app restart unless a platform-level setting truly needs it.
 
 ## Implementation rules
@@ -68,5 +68,7 @@ PATH=/Users/xing.min/.cargo/bin:$PATH pnpm tauri build
 ```
 
 The DMG is written to `src-tauri/target/release/bundle/dmg/`. Verify its bundle version and signature structure before handoff. Current local builds are ad-hoc signed and not Apple-notarized, so do not claim otherwise.
+
+The internal Windows x64 installer is built by `.github/workflows/windows-build.yml` on a Windows runner and uploaded as a private workflow artifact. It is unsigned, so report the expected Windows “Unknown publisher” warning rather than claiming production signing.
 
 The GitHub repository remains private until the owner explicitly opens it. Scan for secrets before commits, keep `main` deployable, and confirm the remote commit SHA after pushing. If GitHub HTTPS negotiation stalls in this environment, use `git -c http.version=HTTP/1.1 push origin main`.

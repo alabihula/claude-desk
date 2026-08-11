@@ -1,9 +1,11 @@
-use crate::data::{insert_attachment, Attachment};
+use crate::{
+    data::{insert_attachment, Attachment},
+    platform,
+};
 use chrono::Utc;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -217,61 +219,17 @@ pub fn open_in_editor(
     line: Option<u32>,
     editor: Option<String>,
 ) -> Result<(), String> {
-    let editor = editor.unwrap_or_else(|| "vscode".into());
-    let target = match line {
-        Some(line) => format!("{}:{}", path, line),
-        None => path.clone(),
-    };
-    let output = if editor == "system" {
-        Command::new("open").arg(&path).output()
-    } else {
-        let (application, cli) = if editor == "cursor" {
-            (
-                "Cursor",
-                "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
-            )
-        } else {
-            (
-                "Visual Studio Code",
-                "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-            )
-        };
-        if Path::new(cli).is_file() {
-            Command::new(cli).args(["--goto", &target]).output()
-        } else {
-            // Passing the file directly also works when the editor is already running.
-            Command::new("open")
-                .args(["-a", application])
-                .arg(&path)
-                .output()
-        }
-    }
-    .map_err(|error| format!("Could not open editor: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    Ok(())
+    platform::open_in_editor(&path, line, editor.as_deref().unwrap_or("vscode"))
 }
 
 #[tauri::command]
 pub fn reveal_path(path: String) -> Result<(), String> {
-    Command::new("open")
-        .arg("-R")
-        .arg(path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    platform::reveal_path(&path)
 }
 
 #[tauri::command]
 pub fn open_terminal(path: String) -> Result<(), String> {
-    Command::new("open")
-        .arg("-a")
-        .arg("Terminal")
-        .arg(path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    platform::open_terminal(&path)
 }
 
 #[cfg(test)]

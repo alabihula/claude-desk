@@ -38,7 +38,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 
       - name: Build NSIS installer
-        run: pnpm tauri build -- --target x86_64-pc-windows-msvc --bundles nsis
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
       - uses: actions/upload-artifact@v4
         with:

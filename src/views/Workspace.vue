@@ -67,7 +67,7 @@ onBeforeUnmount(() => unlistenResize?.())
     <template v-if="store.activeProject && store.activeConversation">
       <FilePreview v-if="store.workspaceView === 'file' && store.filePreview" />
       <template v-else>
-        <MessageList :messages="store.activeMessages" :attachments-by-message="store.activeAttachments" :run="store.activeRun">
+        <MessageList :conversation-id="store.activeConversationId" :messages="store.activeMessages" :attachments-by-message="store.activeAttachments" :run="store.activeRun">
           <div v-if="!store.activeMessages.length && !store.activeRun" class="conversation-empty">
             <div class="empty-sparkle">✦</div><h2>{{ t('workspace.emptyTitle') }}</h2><p>{{ t('workspace.emptyBody', { project: store.activeProject.name }) }}</p>
           </div>

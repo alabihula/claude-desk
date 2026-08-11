@@ -92,6 +92,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     queuedMessages: {},
     drafts: {},
     changes: {},
+    gitEnvironments: {},
     loading: true,
     error: '',
     settingsOpen: false,
@@ -101,6 +102,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     filePreview: null,
     workspaceView: 'conversation',
     diffDrawer: null,
+    environmentPanel: false,
+    gitOperationBusy: false,
     eventUnlisten: null,
   }),
 
@@ -137,6 +140,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
     activeChanges(state) { return state.changes[state.activeProjectId] || [] },
+    activeGitEnvironment(state) {
+      return state.gitEnvironments[state.activeProjectId] || {
+        isRepository: false, branch: '', upstream: '', ahead: 0, behind: 0, additions: 0, deletions: 0,
+      }
+    },
+    activeProjectHasRun(state) {
+      const conversationIds = new Set((state.conversationsByProject[state.activeProjectId] || []).map((item) => item.id))
+      return Object.keys(state.runs).some((conversationId) => conversationIds.has(conversationId))
+    },
     projectConversations: (state) => (projectId) => state.conversationsByProject[projectId] || [],
     conversationById: (state) => (id) => state.conversations.find((item) => item.id === id)
       || Object.values(state.conversationsByProject).flat().find((item) => item.id === id)
@@ -195,6 +207,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeProjectId = id
       this.filePreview = null
       this.workspaceView = 'conversation'
+      this.environmentPanel = false
       await desktop.touchProject(id)
       this.conversations = await this.loadProjectConversations(id, true)
       const first = this.conversations.find((item) => item.id === conversationId) || this.conversations[0]
@@ -525,10 +538,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       const project = this.activeProject
       if (!project) return
       const requestId = ++changesRequestId
-      const changes = await desktop.gitStatus(project.path)
+      const [changes, environment] = await Promise.all([
+        desktop.gitStatus(project.path),
+        desktop.gitEnvironment(project.path),
+      ])
       if (requestId !== changesRequestId || this.activeProjectId !== project.id) return
       this.changes[project.id] = changes
+      this.gitEnvironments[project.id] = environment
       if (this.diffDrawer && !changes.some((file) => file.path === this.diffDrawer.file.path)) this.diffDrawer = null
+    },
+
+    async openEnvironment() {
+      if (!this.activeProject) return
+      this.environmentPanel = true
+      try { await this.refreshChanges() } catch (error) { this.error = String(error) }
     },
 
     async openDiff(file) {
@@ -545,7 +568,20 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async openChanges() {
       const file = preferredChange(this.activeChanges)
+      this.environmentPanel = false
       if (file) await this.openDiff(file)
+    },
+
+    async commitProjectChanges(message, push) {
+      if (!this.activeProject || !this.activeChanges.length || this.activeProjectHasRun || this.gitOperationBusy) return null
+      this.gitOperationBusy = true
+      try {
+        const result = await desktop.gitCommit(this.activeProject.path, message, Boolean(push))
+        await this.refreshChanges()
+        return result
+      } finally {
+        this.gitOperationBusy = false
+      }
     },
 
     async openFile(path, line = null) {

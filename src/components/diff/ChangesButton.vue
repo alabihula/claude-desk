@@ -10,7 +10,7 @@ const { t } = useI18n()
 let refreshTimer
 let unlistenFocus
 
-function openChanges() { store.openChanges() }
+function openEnvironment() { store.openEnvironment() }
 function refreshChanges() {
   store.refreshChanges().catch(() => {})
 }
@@ -36,11 +36,11 @@ onBeforeUnmount(() => {
 
 <template>
   <button
-    v-if="store.activeChanges.length"
+    v-if="store.activeProject"
     class="changes-button"
-    :title="t('changes.review', { count: store.activeChanges.length })"
-    @click="openChanges"
+    :title="t('environment.title')"
+    @click="openEnvironment"
   >
-    <FileDiff :size="15" /><span>{{ t('changes.label') }}</span><em>{{ store.activeChanges.length }}</em>
+    <FileDiff :size="15" /><span>{{ t('changes.label') }}</span><em v-if="store.activeChanges.length">{{ store.activeChanges.length }}</em>
   </button>
 </template>

@@ -4,6 +4,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { Image } from 'lucide-vue-next'
 import AppSidebar from './components/sidebar/AppSidebar.vue'
 import DiffDrawer from './components/diff/DiffDrawer.vue'
+import EnvironmentPanel from './components/diff/EnvironmentPanel.vue'
 import SettingsModal from './components/common/SettingsModal.vue'
 import PermissionsModal from './components/common/PermissionsModal.vue'
 import ImageLightbox from './components/common/ImageLightbox.vue'
@@ -25,6 +26,7 @@ function shortcuts(event) {
   if (event.key === 'Escape') {
     if (store.previewAttachment) store.previewAttachment = null
     else if (store.permissionsOpen) store.permissionsOpen = false
+    else if (store.environmentPanel) store.environmentPanel = false
     else if (store.diffDrawer) store.diffDrawer = null
     else if (store.settingsOpen) store.settingsOpen = false
     else if (store.workspaceView === 'file') store.closeFilePreview()
@@ -57,6 +59,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', shortcuts); unlist
     <div v-if="dragging && store.activeConversation" class="drop-overlay"><div><span><Image :size="26" /></span><strong>{{ t('app.dropTitle') }}</strong><small>{{ t('app.dropSubtitle') }}</small></div></div>
     <div v-if="store.error" class="toast" @click="store.error = ''">{{ store.error }}</div>
     <DiffDrawer />
+    <EnvironmentPanel />
     <SettingsModal />
     <PermissionsModal />
     <ImageLightbox />

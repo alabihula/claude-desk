@@ -3,17 +3,12 @@ import { computed } from 'vue'
 import { ExternalLink, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { changeStatusLabel } from '../../services/changes'
+import { sideBySideDiff } from '../../services/diff'
 import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
-const lines = computed(() => (store.diffDrawer?.content || '').split('\n'))
-function lineKind(line) {
-  if (line.startsWith('+') && !line.startsWith('+++')) return 'addition'
-  if (line.startsWith('-') && !line.startsWith('---')) return 'deletion'
-  if (line.startsWith('@@')) return 'hunk'
-  return ''
-}
+const rows = computed(() => sideBySideDiff(store.diffDrawer?.content))
 async function openFile() {
   const file = store.diffDrawer?.file
   if (!file) return
@@ -42,9 +37,17 @@ async function openFile() {
         <div v-else-if="store.diffDrawer.error" class="diff-empty diff-error">
           <strong>{{ t('common.previewUnavailable') }}</strong><span>{{ store.diffDrawer.error }}</span>
         </div>
-        <div v-else-if="store.diffDrawer.content" class="diff-content">
-          <div v-for="(line, index) in lines" :key="index" class="diff-line" :class="lineKind(line)">
-            <span class="line-number">{{ index + 1 }}</span><code>{{ line || ' ' }}</code>
+        <div v-else-if="store.diffDrawer.content" class="diff-content diff-split">
+          <div v-for="(row, index) in rows" :key="index" class="diff-split-row" :class="row.type">
+            <code v-if="row.type === 'hunk'" class="diff-hunk">{{ row.text }}</code>
+            <template v-else>
+              <div class="diff-cell old" :class="[row.old?.kind, { empty: !row.old }]">
+                <span class="line-number">{{ row.old?.number || '' }}</span><code>{{ row.old?.text || ' ' }}</code>
+              </div>
+              <div class="diff-cell next" :class="[row.next?.kind, { empty: !row.next }]">
+                <span class="line-number">{{ row.next?.number || '' }}</span><code>{{ row.next?.text || ' ' }}</code>
+              </div>
+            </template>
           </div>
         </div>
         <div v-else class="diff-empty">{{ t('changes.binary') }}</div>

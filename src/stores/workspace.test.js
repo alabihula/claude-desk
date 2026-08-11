@@ -17,6 +17,8 @@ vi.mock('../services/desktop', () => ({
     refreshContextStats: vi.fn(),
     listConversations: vi.fn(),
     gitStatus: vi.fn(),
+    gitEnvironment: vi.fn(),
+    gitCommit: vi.fn(),
     renameConversation: vi.fn(),
     readProjectFile: vi.fn(),
     openInEditor: vi.fn(),
@@ -62,6 +64,9 @@ describe('workspace supplemental messages', () => {
     desktop.interruptClaude.mockResolvedValue()
     desktop.listConversations.mockResolvedValue([])
     desktop.gitStatus.mockResolvedValue([])
+    desktop.gitEnvironment.mockResolvedValue({
+      isRepository: true, branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0, additions: 0, deletions: 0,
+    })
     desktop.refreshContextStats.mockResolvedValue(null)
   })
 
@@ -247,6 +252,27 @@ describe('workspace supplemental messages', () => {
     expect(desktop.gitStatus).toHaveBeenCalledWith('/tmp/project')
     expect(store.activeChanges).toEqual([])
     expect(store.diffDrawer).toBeNull()
+  })
+
+  it('commits and refreshes a stable project working tree', async () => {
+    const store = setupStore()
+    store.changes['project-1'] = [{ path: 'src/main.js', status: 'M' }]
+    desktop.gitCommit.mockResolvedValue({ commit: 'abc123 feat: update', pushed: true })
+
+    const result = await store.commitProjectChanges('feat: update', true)
+
+    expect(desktop.gitCommit).toHaveBeenCalledWith('/tmp/project', 'feat: update', true)
+    expect(result).toEqual({ commit: 'abc123 feat: update', pushed: true })
+    expect(store.gitOperationBusy).toBe(false)
+  })
+
+  it('does not commit while Claude is still changing the active project', async () => {
+    const store = setupStore()
+    store.changes['project-1'] = [{ path: 'src/main.js', status: 'M' }]
+    store.runs['conversation-1'] = runningRun()
+
+    expect(await store.commitProjectChanges('feat: update', true)).toBeNull()
+    expect(desktop.gitCommit).not.toHaveBeenCalled()
   })
 
   it('persists project and conversation drag ordering', async () => {

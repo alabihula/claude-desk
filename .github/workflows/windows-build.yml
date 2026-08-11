@@ -40,6 +40,25 @@ jobs:
       - name: Build NSIS installer
         run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
+      - name: Smoke test installer and app launch
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with code $($install.ExitCode)" }
+
+          $uninstall = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+            Where-Object DisplayName -eq "Claude Desk" |
+            Select-Object -First 1
+          if (-not $uninstall.InstallLocation) { throw "Claude Desk installation was not registered" }
+
+          $app = Get-ChildItem $uninstall.InstallLocation -Filter "claude-desk.exe" -Recurse | Select-Object -First 1
+          if (-not $app) { throw "Installed Claude Desk executable was not found" }
+          $process = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) { throw "Claude Desk exited during launch smoke test" }
+          Stop-Process -Id $process.Id -Force
+
       - uses: actions/upload-artifact@v4
         with:
           name: claude-desk-windows-x64

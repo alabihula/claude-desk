@@ -2,6 +2,9 @@ name: Windows internal build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/windows-support
 
 jobs:
   build-windows-x64:

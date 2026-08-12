@@ -254,6 +254,20 @@ describe('workspace supplemental messages', () => {
     expect(store.diffDrawer).toBeNull()
   })
 
+  it('coalesces overlapping Git refreshes for the active project', async () => {
+    const store = setupStore()
+    let resolveStatus
+    desktop.gitStatus.mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve }))
+
+    const first = store.refreshChanges()
+    const second = store.refreshChanges()
+    resolveStatus([])
+    await Promise.all([first, second])
+
+    expect(desktop.gitStatus).toHaveBeenCalledTimes(1)
+    expect(desktop.gitEnvironment).toHaveBeenCalledTimes(1)
+  })
+
   it('commits and refreshes a stable project working tree', async () => {
     const store = setupStore()
     store.changes['project-1'] = [{ path: 'src/main.js', status: 'M' }]

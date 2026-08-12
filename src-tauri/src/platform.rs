@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     env,
+    ffi::OsStr,
     path::{Path, PathBuf},
     process::Command as StdCommand,
 };
@@ -8,6 +9,19 @@ use tokio::process::Command;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Commands used as backend capabilities must never surface a console in the
+/// desktop UI. User-requested terminals intentionally bypass this helper.
+pub fn background_command(program: impl AsRef<OsStr>) -> StdCommand {
+    let command = StdCommand::new(program);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
+        command
+    };
+    command
+}
 
 #[derive(Clone, Debug)]
 pub struct ResolvedCommand {
@@ -205,7 +219,7 @@ pub fn stop_process_tree(pid: u32, run_id: &str) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        let output = StdCommand::new("taskkill.exe")
+        let output = background_command("taskkill.exe")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output()
             .map_err(|error| format!("Could not stop Claude run {run_id}: {error}"))?;
@@ -232,7 +246,7 @@ pub fn open_in_editor(path: &str, line: Option<u32>, editor: &str) -> Result<(),
 #[cfg(target_os = "macos")]
 fn open_editor_command(path: &str, target: &str, editor: &str) -> StdCommand {
     if editor == "system" {
-        let mut command = StdCommand::new("open");
+        let mut command = background_command("open");
         command.arg(path);
         return command;
     }
@@ -248,11 +262,11 @@ fn open_editor_command(path: &str, target: &str, editor: &str) -> StdCommand {
         )
     };
     if Path::new(cli).is_file() {
-        let mut command = StdCommand::new(cli);
+        let mut command = background_command(cli);
         command.args(["--goto", target]);
         command
     } else {
-        let mut command = StdCommand::new("open");
+        let mut command = background_command("open");
         command.args(["-a", application]).arg(path);
         command
     }
@@ -262,12 +276,12 @@ fn open_editor_command(path: &str, target: &str, editor: &str) -> StdCommand {
 fn open_editor_command(path: &str, target: &str, editor: &str) -> StdCommand {
     if editor != "system" {
         if let Some(executable) = windows_editor_path(editor) {
-            let mut command = StdCommand::new(executable);
+            let mut command = background_command(executable);
             command.args(["--goto", target]);
             return command;
         }
     }
-    let mut command = StdCommand::new("explorer.exe");
+    let mut command = background_command("explorer.exe");
     command.arg(path);
     command
 }
@@ -294,21 +308,21 @@ fn windows_editor_path(editor: &str) -> Option<PathBuf> {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn open_editor_command(path: &str, _target: &str, _editor: &str) -> StdCommand {
-    let mut command = StdCommand::new("xdg-open");
+    let mut command = background_command("xdg-open");
     command.arg(path);
     command
 }
 
 pub fn reveal_path(path: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    let result = StdCommand::new("open").arg("-R").arg(path).spawn();
+    let result = background_command("open").arg("-R").arg(path).spawn();
     #[cfg(windows)]
-    let result = StdCommand::new("explorer.exe")
+    let result = background_command("explorer.exe")
         .arg("/select,")
         .arg(path)
         .spawn();
     #[cfg(not(any(target_os = "macos", windows)))]
-    let result = StdCommand::new("xdg-open").arg(path).spawn();
+    let result = background_command("xdg-open").arg(path).spawn();
     result.map(|_| ()).map_err(|error| error.to_string())
 }
 
@@ -385,5 +399,35 @@ mod tests {
         assert!(!is_claude_desk_executable(std::path::Path::new(
             "claude.exe"
         )));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn background_commands_run_without_a_console() {
+        const PROBE: &str = "CLAUDE_DESK_CONSOLE_PROBE";
+        if std::env::var_os(PROBE).is_some() {
+            #[link(name = "Kernel32")]
+            extern "system" {
+                fn GetConsoleWindow() -> *mut std::ffi::c_void;
+            }
+            assert!(unsafe { GetConsoleWindow() }.is_null());
+            return;
+        }
+
+        let output = super::background_command(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::tests::background_commands_run_without_a_console",
+                "--nocapture",
+            ])
+            .env(PROBE, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

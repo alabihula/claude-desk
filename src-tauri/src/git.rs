@@ -1,5 +1,6 @@
+use crate::platform;
 use serde::Serialize;
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,7 +29,7 @@ pub struct GitCommitResult {
 }
 
 fn run_git(project_path: &str, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new("git")
+    platform::background_command("git")
         .arg("-C")
         .arg(project_path)
         .args(args)

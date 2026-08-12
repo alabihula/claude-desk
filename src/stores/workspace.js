@@ -23,6 +23,7 @@ const defaultSettings = {
 let diffRequestId = 0
 let filePreviewRequestId = 0
 let changesRequestId = 0
+const changesRefreshes = new Map()
 
 function conciseTitle(content) {
   const title = content.replace(/\s+/g, ' ').trim()
@@ -537,15 +538,21 @@ export const useWorkspaceStore = defineStore('workspace', {
     async refreshChanges() {
       const project = this.activeProject
       if (!project) return
+      if (changesRefreshes.has(project.id)) return changesRefreshes.get(project.id)
       const requestId = ++changesRequestId
-      const [changes, environment] = await Promise.all([
+      const refresh = Promise.all([
         desktop.gitStatus(project.path),
         desktop.gitEnvironment(project.path),
-      ])
-      if (requestId !== changesRequestId || this.activeProjectId !== project.id) return
-      this.changes[project.id] = changes
-      this.gitEnvironments[project.id] = environment
-      if (this.diffDrawer && !changes.some((file) => file.path === this.diffDrawer.file.path)) this.diffDrawer = null
+      ]).then(([changes, environment]) => {
+        if (requestId !== changesRequestId || this.activeProjectId !== project.id) return
+        this.changes[project.id] = changes
+        this.gitEnvironments[project.id] = environment
+        if (this.diffDrawer && !changes.some((file) => file.path === this.diffDrawer.file.path)) this.diffDrawer = null
+      }).finally(() => {
+        if (changesRefreshes.get(project.id) === refresh) changesRefreshes.delete(project.id)
+      })
+      changesRefreshes.set(project.id, refresh)
+      return refresh
     },
 
     async openEnvironment() {

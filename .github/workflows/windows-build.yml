@@ -45,6 +45,7 @@ jobs:
         run: |
           $app = "src-tauri/target/x86_64-pc-windows-msvc/release/claude-desk.exe"
           $stream = [System.IO.File]::OpenRead($app)
+          $reader = $null
           try {
             $reader = [System.IO.BinaryReader]::new($stream)
             $stream.Position = 0x3c
@@ -52,9 +53,10 @@ jobs:
             $stream.Position = $peOffset + 0x5c
             $subsystem = $reader.ReadUInt16()
           } finally {
-            $reader?.Dispose()
+            if ($null -ne $reader) { $reader.Dispose() }
             $stream.Dispose()
           }
+          Write-Host "Windows PE subsystem: $subsystem"
           if ($subsystem -ne 2) { throw "Expected Windows GUI subsystem (2), got $subsystem" }
 
       - name: Smoke test installer and app launch

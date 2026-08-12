@@ -43,6 +43,41 @@ impl ResolvedCommand {
     }
 }
 
+pub fn ensure_external_command(command: &ResolvedCommand) -> Result<(), String> {
+    let current = env::current_exe().map_err(|error| error.to_string())?;
+    if same_executable(command.path(), &current) || is_claude_desk_executable(command.path()) {
+        return Err(
+            "Claude Code command resolves to Claude Desk itself. Reset the command to `claude` or select the Claude Code executable."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn is_claude_desk_executable(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let normalized = name.to_ascii_lowercase().replace([' ', '_'], "-");
+            normalized == "claude-desk"
+        })
+        .unwrap_or(false)
+}
+
+fn same_executable(left: &Path, right: &Path) -> bool {
+    let left = left.canonicalize().unwrap_or_else(|_| left.to_path_buf());
+    let right = right.canonicalize().unwrap_or_else(|_| right.to_path_buf());
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
 fn executable_candidates(command: &str) -> Vec<String> {
     #[cfg(windows)]
     {
@@ -303,7 +338,7 @@ pub fn open_terminal(path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_command;
+    use super::{is_claude_desk_executable, resolve_command, same_executable};
     use std::{collections::HashMap, fs};
     use uuid::Uuid;
 
@@ -322,5 +357,33 @@ mod tests {
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compares_canonical_executable_paths() {
+        let root = std::env::temp_dir().join(format!("claude-desk-platform-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        let executable = root.join("claude-desk");
+        fs::write(&executable, "test").unwrap();
+
+        assert!(same_executable(
+            &root.join("nested").join("..").join("claude-desk"),
+            &executable
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_current_and_previous_claude_desk_binary_names() {
+        assert!(is_claude_desk_executable(std::path::Path::new(
+            "claude-desk.exe"
+        )));
+        assert!(is_claude_desk_executable(std::path::Path::new(
+            "Claude Desk.exe"
+        )));
+        assert!(!is_claude_desk_executable(std::path::Path::new(
+            "claude.exe"
+        )));
     }
 }

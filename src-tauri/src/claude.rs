@@ -13,7 +13,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::ChildStdin,
     sync::Mutex as AsyncMutex,
-    time::{sleep, Duration},
+    time::{sleep, timeout, Duration},
 };
 use uuid::Uuid;
 
@@ -85,16 +85,46 @@ pub async fn check_claude(
             error: Some("Claude Code command was not found in the detected PATH".into()),
         });
     };
-    let output = resolved
-        .command()
+    if let Err(error) = platform::ensure_external_command(&resolved) {
+        return Ok(ClaudeHealth {
+            available: false,
+            command,
+            resolved_path: Some(resolved.path().to_string_lossy().to_string()),
+            version: None,
+            detected_path,
+            error: Some(error),
+        });
+    }
+    let mut version_command = resolved.command();
+    version_command
         .arg("--version")
         .envs(&environment)
-        .output()
-        .await
-        .map_err(|error| error.to_string())?;
-    let available = output.status.success();
-    let version = available.then(|| String::from_utf8_lossy(&output.stdout).trim().to_string());
-    let error = (!available).then(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
+        .kill_on_drop(true);
+    let output = match timeout(Duration::from_secs(8), version_command.output()).await {
+        Ok(result) => result.map_err(|error| error.to_string())?,
+        Err(_) => {
+            return Ok(ClaudeHealth {
+                available: false,
+                command,
+                resolved_path: Some(resolved.path().to_string_lossy().to_string()),
+                version: None,
+                detected_path,
+                error: Some("Claude Code version check timed out".into()),
+            });
+        }
+    };
+    let version_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let available =
+        output.status.success() && version_text.to_ascii_lowercase().contains("claude code");
+    let version = available.then_some(version_text);
+    let error = (!available).then(|| {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            "The resolved command did not identify itself as Claude Code".into()
+        } else {
+            stderr
+        }
+    });
     Ok(ClaudeHealth {
         available,
         command,
@@ -181,6 +211,7 @@ pub async fn send_claude(
             environment.get("PATH").cloned().unwrap_or_default()
         )
     })?;
+    platform::ensure_external_command(&resolved)?;
     if !Path::new(&request.project_path).is_dir() {
         return Err("The selected project directory no longer exists".into());
     }

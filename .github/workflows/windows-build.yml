@@ -76,7 +76,15 @@ jobs:
           if (-not $app) { throw "Installed Claude Desk executable was not found" }
           $process = Start-Process -FilePath $app.FullName -PassThru
           Start-Sleep -Seconds 5
+          $process.Refresh()
           if ($process.HasExited) { throw "Claude Desk exited during launch smoke test" }
+
+          $second = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 3
+          $second.Refresh()
+          $process.Refresh()
+          if (-not $second.HasExited) { throw "A second Claude Desk instance remained running" }
+          if ($process.HasExited) { throw "The original Claude Desk instance exited after a second launch" }
           Stop-Process -Id $process.Id -Force
 
       - uses: actions/upload-artifact@v4

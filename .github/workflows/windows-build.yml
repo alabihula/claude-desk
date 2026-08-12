@@ -40,6 +40,23 @@ jobs:
       - name: Build NSIS installer
         run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
+      - name: Verify Windows GUI subsystem
+        shell: pwsh
+        run: |
+          $app = "src-tauri/target/x86_64-pc-windows-msvc/release/claude-desk.exe"
+          $stream = [System.IO.File]::OpenRead($app)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            $stream.Position = 0x3c
+            $peOffset = $reader.ReadInt32()
+            $stream.Position = $peOffset + 0x5c
+            $subsystem = $reader.ReadUInt16()
+          } finally {
+            $reader?.Dispose()
+            $stream.Dispose()
+          }
+          if ($subsystem -ne 2) { throw "Expected Windows GUI subsystem (2), got $subsystem" }
+
       - name: Smoke test installer and app launch
         shell: pwsh
         run: |

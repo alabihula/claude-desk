@@ -6,6 +6,9 @@ use std::{
 };
 use tokio::process::Command;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Clone, Debug)]
 pub struct ResolvedCommand {
     path: PathBuf,
@@ -18,12 +21,24 @@ impl ResolvedCommand {
     }
 
     pub fn command(&self) -> Command {
-        if self.uses_cmd {
+        let command = if self.uses_cmd {
             let mut command = Command::new("cmd.exe");
             command.args(["/D", "/C"]).arg(&self.path);
             command
         } else {
             Command::new(&self.path)
+        };
+        // Claude Desk is a GUI product. Native Claude and npm's claude.cmd must
+        // both stay attached to our structured pipes without opening a console.
+        #[cfg(windows)]
+        {
+            let mut command = command;
+            command.creation_flags(CREATE_NO_WINDOW);
+            command
+        }
+        #[cfg(not(windows))]
+        {
+            command
         }
     }
 }

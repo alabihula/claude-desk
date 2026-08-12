@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 describe('FilePreview selection context', () => {
-  it('adds the selected line range to the current conversation draft without sending', async () => {
+  it('adds the selected line range as structured conversation context without changing the text draft', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const store = useWorkspaceStore()
@@ -51,6 +51,9 @@ describe('FilePreview selection context', () => {
     await nextTick()
 
     expect(store.workspaceView).toBe('conversation')
-    expect(store.drafts['conversation-1']).toBe('Review src/main.js lines 2-3:\n\n```\nsecond\nthird\n```')
+    expect(store.drafts['conversation-1']).toBeUndefined()
+    expect(store.snippetDrafts['conversation-1']).toEqual([expect.objectContaining({
+      path: 'src/main.js', startLine: 2, endLine: 3, content: 'second\nthird',
+    })])
   })
 })

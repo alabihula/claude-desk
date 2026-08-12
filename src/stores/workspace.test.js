@@ -186,6 +186,43 @@ describe('workspace supplemental messages', () => {
     expect(store.drafts).toEqual({ 'conversation-2': '另一段草稿' })
   })
 
+  it('deduplicates selected file fragments within each conversation draft', () => {
+    const store = setupStore()
+    const snippet = { path: 'src/main.js', startLine: 2, endLine: 3, content: 'one\ntwo' }
+
+    store.addSnippetDraft('conversation-1', snippet)
+    store.addSnippetDraft('conversation-1', snippet)
+    store.addSnippetDraft('conversation-2', snippet)
+
+    expect(store.snippetDrafts['conversation-1']).toHaveLength(1)
+    expect(store.snippetDrafts['conversation-2']).toHaveLength(1)
+  })
+
+  it('keeps saved user text compact while sending full selected file context to Claude', async () => {
+    const store = setupStore()
+    const snippets = [{ path: 'src/main.js', startLine: 2, endLine: 3, content: 'one\ntwo' }]
+
+    await store.sendMessage('检查这里', [], null, snippets)
+
+    expect(desktop.saveMessage).toHaveBeenCalledWith('conversation-1', 'user', '检查这里')
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('File: src/main.js (lines 2-3)\n```\none\ntwo\n```'),
+    }))
+  })
+
+  it('can send selected file context without requiring editable message text', async () => {
+    const store = setupStore()
+    store.settings.language = 'zh-CN'
+    const snippets = [{ path: 'src/main.js', startLine: 2, endLine: 2, content: 'const value = 1' }]
+
+    await store.sendMessage('', [], null, snippets)
+
+    expect(desktop.saveMessage).toHaveBeenCalledWith('conversation-1', 'user', '请查看以下 1 个代码片段。')
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('File: src/main.js (line 2)'),
+    }))
+  })
+
   it('keeps queued supplements paused after an explicit stop', async () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun('stopped')
@@ -235,17 +272,6 @@ describe('workspace supplemental messages', () => {
 
     expect(desktop.openInEditor).toHaveBeenCalledWith('/tmp/project/src/main.js', 12, 'vscode')
     expect(desktop.readProjectFile).not.toHaveBeenCalled()
-  })
-
-  it('appends selected file context to the current draft', () => {
-    const store = setupStore()
-    store.setDraft('conversation-1', 'Review this carefully.')
-
-    store.appendDraft('conversation-1', '请查看 src/main.js 第 2 行：\n\n```\nconst value = 1\n```')
-
-    expect(store.drafts['conversation-1']).toBe(
-      'Review this carefully.\n\n请查看 src/main.js 第 2 行：\n\n```\nconst value = 1\n```',
-    )
   })
 
   it('keeps the current project selected when another project is removed', async () => {

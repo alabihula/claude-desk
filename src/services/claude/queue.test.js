@@ -29,6 +29,15 @@ describe('Claude supplemental message queue', () => {
     expect(result.skill).toEqual({ name: 'review', path: '/tmp/review/SKILL.md' })
   })
 
+  it('copies structured text fragments into a queued message', () => {
+    const snippet = { id: 'snippet-1', path: 'src/main.js', startLine: 2, endLine: 3, content: 'one\ntwo' }
+    const result = createQueuedMessage({
+      id: 'snippet', conversation, project, content: '', attachments: [], snippets: [snippet], createdAt: 'now',
+    })
+    expect(result.snippets).toEqual([snippet])
+    expect(result.snippets[0]).not.toBe(snippet)
+  })
+
   it('moves the selected message to the front for immediate steering', () => {
     const result = prioritizeQueuedMessage([queued('one'), queued('two'), queued('three')], 'two')
     expect(result.map(({ id, status }) => ({ id, status }))).toEqual([

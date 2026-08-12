@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { FileText, MessageSquarePlus, FolderOpen } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { desktop } from '../../services/desktop'
-import { fileSelectionPrompt, formatFileSize, selectionLineRange } from '../../services/localFiles'
+import { fileSelectionSnippet, formatFileSize, selectionLineRange } from '../../services/localFiles'
 import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
@@ -25,14 +25,14 @@ function updateSelection() {
 
 function addSelection() {
   if (!selection.value || !content.value) return
-  const prompt = fileSelectionPrompt(
+  const snippet = fileSelectionSnippet(
     store.filePreview.relativePath,
     store.filePreview.content,
     content.value.selectionStart,
     content.value.selectionEnd,
-    t('files.selectionContext', { path: store.filePreview.relativePath, lines: selectionLabel.value }),
   )
-  store.appendDraft(store.activeConversationId, prompt)
+  store.addSnippetDraft(store.activeConversationId, snippet)
+  selection.value = null
   store.workspaceView = 'conversation'
   nextTick(() => window.dispatchEvent(new Event('claude-desk-focus')))
 }

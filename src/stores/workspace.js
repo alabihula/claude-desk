@@ -7,6 +7,7 @@ import { parseClaudeEvent } from '../services/claude/parser'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { withRuntimeGuidance } from '../services/claude/runtime'
 import { externalSkillPrompt } from '../services/skills'
+import { fileSelectionsPrompt } from '../services/localFiles'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 
@@ -29,6 +30,12 @@ const changesRefreshes = new Map()
 function conciseTitle(content) {
   const title = content.replace(/\s+/g, ' ').trim()
   return title.length > 28 ? `${title.slice(0, 28)}…` : title || 'New Conversation'
+}
+
+function snippetOnlyMessage(language, count) {
+  return language === 'zh-CN'
+    ? `请查看以下 ${count} 个代码片段。`
+    : `Please review the following ${count} code snippet${count === 1 ? '' : 's'}.`
 }
 
 function moveRelative(items, sourceId, targetId, position = 'before') {
@@ -93,6 +100,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     runs: {},
     queuedMessages: {},
     drafts: {},
+    snippetDrafts: {},
     changes: {},
     gitEnvironments: {},
     loading: true,
@@ -272,10 +280,19 @@ export const useWorkspaceStore = defineStore('workspace', {
       else delete this.drafts[conversationId]
     },
 
-    appendDraft(conversationId, content) {
-      if (!conversationId || !content?.trim()) return
-      const current = this.drafts[conversationId] || ''
-      this.drafts[conversationId] = current ? `${current.trimEnd()}\n\n${content.trim()}` : content.trim()
+    addSnippetDraft(conversationId, snippet) {
+      if (!conversationId || !snippet?.content || !snippet.path) return
+      const current = this.snippetDrafts[conversationId] || []
+      const duplicate = current.some((item) => item.path === snippet.path
+        && item.startLine === snippet.startLine
+        && item.endLine === snippet.endLine
+        && item.content === snippet.content)
+      if (duplicate) return
+      this.snippetDrafts[conversationId] = [...current, { ...snippet, id: crypto.randomUUID() }]
+    },
+
+    clearSnippetDrafts(conversationId) {
+      if (conversationId) delete this.snippetDrafts[conversationId]
     },
 
     async selectConversation(id) {
@@ -319,6 +336,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       delete this.messages[conversation.id]
       delete this.queuedMessages[conversation.id]
       delete this.drafts[conversation.id]
+      delete this.snippetDrafts[conversation.id]
       if (this.activeConversationId === conversation.id) {
         this.activeConversationId = null
         if (this.conversations[0]) await this.selectConversation(this.conversations[0].id)
@@ -353,17 +371,18 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
-    async sendMessage(content, attachments = [], skill = null) {
+    async sendMessage(content, attachments = [], skill = null, snippets = []) {
       const conversation = this.activeConversation
       const project = this.activeProject
       const cleanContent = content.trim()
-      if (!conversation || !project || (!cleanContent && !attachments.length)) return
+      if (!conversation || !project || (!cleanContent && !attachments.length && !snippets.length)) return
       const queued = createQueuedMessage({
         id: crypto.randomUUID(),
         conversation,
         project,
         content: cleanContent,
         attachments,
+        snippets,
         skill,
         createdAt: new Date().toISOString(),
       })
@@ -379,7 +398,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!queued || this.runs[queued.conversationId]) return
       const previousMessages = this.messages[queued.conversationId] || []
       const hasPreviousUserMessage = previousMessages.some((message) => message.role === 'user')
-      const content = queued.content || '请查看附件。'
+      const content = queued.content || (queued.snippets.length
+        ? snippetOnlyMessage(this.settings.language, queued.snippets.length)
+        : '请查看附件。')
       const userMessage = await desktop.saveMessage(queued.conversationId, 'user', content)
       if (queued.attachments.length) {
         await desktop.linkAttachments(userMessage.id, queued.attachments.map((item) => item.id))
@@ -389,7 +410,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.messages[queued.conversationId] = previousMessages
       const conversation = this.conversations.find((item) => item.id === queued.conversationId)
       if (conversation?.title === 'New Conversation') {
-        await this.renameConversation(conversation, conciseTitle(queued.content || queued.attachments[0]?.name || 'New Conversation'))
+        await this.renameConversation(conversation, conciseTitle(queued.content || queued.snippets[0]?.path || queued.attachments[0]?.name || 'New Conversation'))
       }
 
       this.runs[queued.conversationId] = newRun('chat', this.contextStats[queued.conversationId])
@@ -398,7 +419,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           conversationId: queued.conversationId,
           sessionId: queued.sessionId,
           projectPath: queued.projectPath,
-          prompt: withRuntimeGuidance(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments)),
+          prompt: withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
           resume: hasPreviousUserMessage,
           command: this.settings.command,
           args: this.settings.args,

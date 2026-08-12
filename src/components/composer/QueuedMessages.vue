@@ -22,8 +22,9 @@ defineEmits(['activate', 'remove'])
       <article v-for="(message, index) in messages" :key="message.id" :class="{ steering: message.status === 'steering' }">
         <span class="queue-index">{{ index + 1 }}</span>
         <div class="queue-content">
-          <p>{{ message.content || t('queue.seeAttachments') }}</p>
+          <p>{{ message.content || t(message.snippets?.length ? 'queue.seeSnippets' : 'queue.seeAttachments') }}</p>
           <small v-if="message.attachments.length"><Paperclip :size="11" />{{ t('queue.attachments', { count: message.attachments.length }) }}</small>
+          <small v-if="message.snippets?.length">{{ t('queue.snippets', { count: message.snippets.length }) }}</small>
         </div>
         <button
           class="queue-activate"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractLocalFileCandidates, extractProjectFileReferences, fileSelectionPrompt, formatFileSize, selectionLineRange } from './localFiles'
+import { extractLocalFileCandidates, extractProjectFileReferences, fileSelectionSnippet, fileSelectionsPrompt, formatFileSize, selectionLineRange } from './localFiles'
 
 describe('local file references', () => {
   it('extracts generated files from inline code, links, and bare absolute paths', () => {
@@ -43,11 +43,13 @@ describe('local file references', () => {
     expect(selectionLineRange(content, 4, 4)).toBeNull()
   })
 
-  it('formats selected file context for the composer', () => {
-    const content = 'first\nsecond\nthird'
-    expect(fileSelectionPrompt('src/main.js', content, 6, 12, 'Review src/main.js line 2:')).toBe(
-      'Review src/main.js line 2:\n\n```\nsecond\n```',
+  it('keeps selected file context structured until message dispatch', () => {
+    const snippet = fileSelectionSnippet('src/main.js', 'first\nsecond\nthird', 6, 12)
+    expect(snippet).toEqual({ path: 'src/main.js', startLine: 2, endLine: 2, content: 'second' })
+    expect(fileSelectionsPrompt('Please review this.', [snippet])).toBe(
+      'Please review this.\n\nSelected project file context:\n\nFile: src/main.js (line 2)\n```\nsecond\n```',
     )
-    expect(fileSelectionPrompt('README.md', '````', 0, 4)).toContain('`````\n````\n`````')
+    expect(fileSelectionsPrompt('', [{ ...snippet, path: 'README.md', content: '````' }])).toContain('`````\n````\n`````')
+    expect(fileSelectionsPrompt('', [snippet])).toMatch(/^Selected project file context:/)
   })
 })

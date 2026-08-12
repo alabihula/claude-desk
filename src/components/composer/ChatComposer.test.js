@@ -125,6 +125,70 @@ describe('ChatComposer attachments', () => {
       '/superpowers:brainstorming 设计登录方案',
       [],
       { name: 'superpowers:brainstorming', path: '/tmp/superpowers/skills/brainstorming/SKILL.md' },
+      [],
     )
+  })
+
+  it('shows selected code as a compact capsule and sends the structured fragments', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.settings.language = 'zh-CN'
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [
+      { id: 'conversation-1', projectId: 'project-1' },
+      { id: 'conversation-2', projectId: 'project-1' },
+    ]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    store.sendMessage = vi.fn()
+    store.addSnippetDraft('conversation-1', {
+      path: 'src/main.js', startLine: 4, endLine: 7, content: 'const answer = 42',
+    })
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    expect(root.querySelector('.snippet-drafts-chip')?.textContent).toContain('1 个已选文本片段')
+    expect(root.querySelector('.snippet-drafts-tooltip')?.textContent).toContain('src/main.js')
+    expect(root.querySelector('.snippet-drafts-tooltip')?.textContent).toContain('第 4-7 行')
+
+    store.activeConversationId = 'conversation-2'
+    await nextTick()
+    expect(root.querySelector('.snippet-drafts-chip')).toBeNull()
+    store.activeConversationId = 'conversation-1'
+    await nextTick()
+
+    root.querySelector('.send-button:last-child').click()
+    await flushPromises()
+    expect(store.sendMessage).toHaveBeenCalledWith('', [], null, [expect.objectContaining({
+      path: 'src/main.js', startLine: 4, endLine: 7, content: 'const answer = 42',
+    })])
+    expect(store.snippetDrafts['conversation-1']).toBeUndefined()
+    expect(root.querySelector('.snippet-drafts-chip')).toBeNull()
+  })
+
+  it('removes all selected text fragments from the capsule action', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    store.addSnippetDraft('conversation-1', { path: 'a.js', startLine: 1, endLine: 1, content: 'a' })
+    store.addSnippetDraft('conversation-1', { path: 'b.js', startLine: 2, endLine: 2, content: 'b' })
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    expect(root.querySelector('.snippet-drafts-chip')?.textContent).toContain('2 selected text fragments')
+    root.querySelector('.snippet-drafts-chip > button').click()
+    await nextTick()
+    expect(store.snippetDrafts['conversation-1']).toBeUndefined()
   })
 })

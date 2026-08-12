@@ -10,6 +10,7 @@ import { matchingSkills, selectedSkillInput, slashSkillQuery } from '../../servi
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
+import CodeSnippetDrafts from './CodeSnippetDrafts.vue'
 import QueuedMessages from './QueuedMessages.vue'
 import SlashSkillMenu from './SlashSkillMenu.vue'
 import { useI18n } from '../../services/i18n'
@@ -31,6 +32,7 @@ const attachments = computed({
     else delete attachmentDrafts.value[activeConversationId.value]
   },
 })
+const snippets = computed(() => store.snippetDrafts[activeConversationId.value] || [])
 const skills = ref([])
 const selectedSkill = computed({
   get: () => skillDrafts.value[activeConversationId.value] || null,
@@ -76,16 +78,18 @@ async function onPaste(event) {
 }
 
 async function send() {
-  if (!text.value.trim() && !attachments.value.length) return
+  if (!text.value.trim() && !attachments.value.length && !snippets.value.length) return
   const conversationId = store.activeConversationId
   const outgoing = attachments.value
+  const outgoingSnippets = snippets.value
   const content = text.value
   const skill = selectedSkill.value
   text.value = ''
   selectedSkill.value = null
   attachments.value = []
+  store.clearSnippetDrafts(conversationId)
   store.setDraft(conversationId, '')
-  await store.sendMessage(content, outgoing, skill)
+  await store.sendMessage(content, outgoing, skill, outgoingSnippets)
 }
 
 function keydown(event) {
@@ -204,6 +208,7 @@ onBeforeUnmount(() => {
           <button :title="t('composer.removeAttachment')" @click="attachments.splice(index, 1)"><X :size="13" /></button>
         </div>
       </div>
+      <CodeSnippetDrafts :snippets="snippets" @clear="store.clearSnippetDrafts(activeConversationId)" />
       <SlashSkillMenu :skills="skillMenuOpen ? visibleSkills : []" :active-index="skillIndex" @select="chooseSkill" />
       <textarea
         ref="input"
@@ -222,7 +227,7 @@ onBeforeUnmount(() => {
         <ContextMeter />
         <span class="composer-hint">{{ t(store.activeRun ? 'composer.queueHint' : 'composer.sendHint') }} · {{ t('composer.newlineHint') }}</span>
         <button v-if="store.activeRun" class="send-button stop-button" :title="t('composer.stop')" @click="store.stopClaude()"><Square :size="13" fill="currentColor" /></button>
-        <button class="send-button" :disabled="!text.trim() && !attachments.length" :title="t(store.activeRun ? 'composer.queue' : 'composer.send')" @click="send"><ArrowUp :size="18" /></button>
+        <button class="send-button" :disabled="!text.trim() && !attachments.length && !snippets.length" :title="t(store.activeRun ? 'composer.queue' : 'composer.send')" @click="send"><ArrowUp :size="18" /></button>
       </div>
     </div>
   </div>

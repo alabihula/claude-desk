@@ -1,4 +1,4 @@
-export function createQueuedMessage({ id, conversation, project, content, attachments = [], skill = null, createdAt }) {
+export function createQueuedMessage({ id, conversation, project, content, attachments = [], snippets = [], skill = null, createdAt }) {
   return {
     id,
     conversationId: conversation.id,
@@ -7,6 +7,7 @@ export function createQueuedMessage({ id, conversation, project, content, attach
     projectPath: project.path,
     content: content.trim(),
     attachments: attachments.map((item) => ({ ...item })),
+    snippets: snippets.map((item) => ({ ...item })),
     skill: skill ? { ...skill } : null,
     status: 'queued',
     createdAt,

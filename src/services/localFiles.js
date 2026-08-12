@@ -62,12 +62,28 @@ export function selectionLineRange(content, start, end) {
   return { startLine, endLine }
 }
 
-export function fileSelectionPrompt(path, content, start, end, reference = '') {
+export function fileSelectionSnippet(path, content, start, end) {
   const range = selectionLineRange(content, start, end)
-  if (!range) return ''
-  const selected = content.slice(start, end)
-  const longestFence = Math.max(0, ...[...selected.matchAll(/`+/g)].map((match) => match[0].length))
-  const fence = '`'.repeat(Math.max(3, longestFence + 1))
-  const fallback = `${path}:${range.startLine}${range.startLine === range.endLine ? '' : `-${range.endLine}`}`
-  return `${reference || fallback}\n\n${fence}\n${selected}\n${fence}`
+  if (!range) return null
+  return {
+    path,
+    startLine: range.startLine,
+    endLine: range.endLine,
+    content: content.slice(start, end),
+  }
+}
+
+export function fileSelectionsPrompt(content, snippets = []) {
+  if (!snippets.length) return content
+  const blocks = snippets.map((snippet) => {
+    const selected = String(snippet.content || '')
+    const longestFence = Math.max(0, ...[...selected.matchAll(/`+/g)].map((match) => match[0].length))
+    const fence = '`'.repeat(Math.max(3, longestFence + 1))
+    const path = String(snippet.path || '').replace(/[\r\n]+/g, ' ')
+    const lines = snippet.startLine === snippet.endLine
+      ? `line ${snippet.startLine}`
+      : `lines ${snippet.startLine}-${snippet.endLine}`
+    return `File: ${path} (${lines})\n${fence}\n${selected}\n${fence}`
+  })
+  return [content.trim(), `Selected project file context:\n\n${blocks.join('\n\n')}`].filter(Boolean).join('\n\n')
 }

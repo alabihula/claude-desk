@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from './localFiles'
+import { extractLocalFileCandidates, extractProjectFileReferences, fileSelectionPrompt, formatFileSize, selectionLineRange } from './localFiles'
 
 describe('local file references', () => {
   it('extracts generated files from inline code, links, and bare absolute paths', () => {
@@ -34,5 +34,20 @@ describe('local file references', () => {
       { path: 'src/main.js', line: 12 },
       { path: 'components/Button.vue', line: null },
     ])
+  })
+
+  it('maps a text selection to its inclusive source line range', () => {
+    const content = 'first\nsecond\nthird\n'
+    expect(selectionLineRange(content, 6, 18)).toEqual({ startLine: 2, endLine: 3 })
+    expect(selectionLineRange(content, 6, 13)).toEqual({ startLine: 2, endLine: 2 })
+    expect(selectionLineRange(content, 4, 4)).toBeNull()
+  })
+
+  it('formats selected file context for the composer', () => {
+    const content = 'first\nsecond\nthird'
+    expect(fileSelectionPrompt('src/main.js', content, 6, 12, 'Review src/main.js line 2:')).toBe(
+      'Review src/main.js line 2:\n\n```\nsecond\n```',
+    )
+    expect(fileSelectionPrompt('README.md', '````', 0, 4)).toContain('`````\n````\n`````')
   })
 })

@@ -6,6 +6,7 @@ import { preferredChange } from '../services/changes'
 import { parseClaudeEvent } from '../services/claude/parser'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { withRuntimeGuidance } from '../services/claude/runtime'
+import { externalSkillPrompt } from '../services/skills'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 
@@ -271,6 +272,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       else delete this.drafts[conversationId]
     },
 
+    appendDraft(conversationId, content) {
+      if (!conversationId || !content?.trim()) return
+      const current = this.drafts[conversationId] || ''
+      this.drafts[conversationId] = current ? `${current.trimEnd()}\n\n${content.trim()}` : content.trim()
+    },
+
     async selectConversation(id) {
       this.activeConversationId = id
       this.workspaceView = 'conversation'
@@ -346,7 +353,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
-    async sendMessage(content, attachments = []) {
+    async sendMessage(content, attachments = [], skill = null) {
       const conversation = this.activeConversation
       const project = this.activeProject
       const cleanContent = content.trim()
@@ -357,6 +364,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         project,
         content: cleanContent,
         attachments,
+        skill,
         createdAt: new Date().toISOString(),
       })
       if (this.runs[conversation.id] || this.queuedMessages[conversation.id]?.length) {
@@ -390,12 +398,13 @@ export const useWorkspaceStore = defineStore('workspace', {
           conversationId: queued.conversationId,
           sessionId: queued.sessionId,
           projectPath: queued.projectPath,
-          prompt: withRuntimeGuidance(attachmentPrompt(content, queued.attachments)),
+          prompt: withRuntimeGuidance(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments)),
           resume: hasPreviousUserMessage,
           command: this.settings.command,
           args: this.settings.args,
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
+          skillPath: queued.skill?.path || null,
         })
         if (this.runs[queued.conversationId]) this.runs[queued.conversationId].runId = runId
       } catch (error) {
@@ -591,15 +600,16 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
-    async openFile(path, line = null) {
+    async openFile(path, line = null, forceInternal = false) {
       if (!this.activeProject) return
-      if (this.settings.editor !== 'claude-desk') {
+      if (!forceInternal && this.settings.editor !== 'claude-desk') {
         try { await desktop.openInEditor(path, line, this.settings.editor) } catch (error) { this.error = String(error) }
         return
       }
       const requestId = ++filePreviewRequestId
       this.filePreview = {
         path,
+        relativePath: path,
         name: path.split('/').pop() || 'file',
         content: '',
         size: 0,
@@ -607,7 +617,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         error: '',
         requestId,
       }
-      this.workspaceView = 'file'
+      this.workspaceView = 'files'
       try {
         const file = await desktop.readProjectFile(this.activeProject.path, path)
         if (this.filePreview?.requestId === requestId) Object.assign(this.filePreview, file, { loading: false })

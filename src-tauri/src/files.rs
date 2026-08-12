@@ -22,9 +22,18 @@ pub struct LocalFile {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFile {
     path: String,
+    relative_path: String,
     name: String,
     content: String,
     size: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEntry {
+    name: String,
+    path: String,
+    kind: String,
 }
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
@@ -73,6 +82,60 @@ fn resolve_project_file(project_path: &Path, candidate: &Path) -> Result<PathBuf
         return Err("Only files inside the active project can be accessed".into());
     }
     Ok(resolved)
+}
+
+fn resolve_project_directory(project_path: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    let project = fs::canonicalize(project_path).map_err(|_| "Project directory is unavailable")?;
+    let requested = if candidate.as_os_str().is_empty() {
+        project.clone()
+    } else if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        project.join(candidate)
+    };
+    let resolved = fs::canonicalize(requested).map_err(|_| "Directory no longer exists")?;
+    if !resolved.starts_with(&project) || !resolved.is_dir() {
+        return Err("Only directories inside the active project can be listed".into());
+    }
+    Ok(resolved)
+}
+
+fn project_entries(project_path: &Path, directory: &Path) -> Result<Vec<ProjectEntry>, String> {
+    let project = fs::canonicalize(project_path).map_err(|_| "Project directory is unavailable")?;
+    let directory = resolve_project_directory(&project, directory)?;
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let Ok(path) = fs::canonicalize(entry.path()) else {
+            continue;
+        };
+        if !path.starts_with(&project) {
+            continue;
+        }
+        let kind = if path.is_dir() {
+            "directory"
+        } else if path.is_file() {
+            "file"
+        } else {
+            continue;
+        };
+        let relative = path
+            .strip_prefix(&project)
+            .map_err(|error| error.to_string())?;
+        entries.push(ProjectEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            path: relative.to_string_lossy().to_string(),
+            kind: kind.into(),
+        });
+    }
+    entries.sort_by(|left, right| {
+        let left_rank = if left.kind == "directory" { 0 } else { 1 };
+        let right_rank = if right.kind == "directory" { 0 } else { 1 };
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(entries)
 }
 
 fn build_attachment(
@@ -193,7 +256,9 @@ pub fn download_file(
 
 #[tauri::command]
 pub fn read_project_file(project_path: String, source_path: String) -> Result<ProjectFile, String> {
-    let path = resolve_project_file(Path::new(&project_path), Path::new(&source_path))?;
+    let project =
+        fs::canonicalize(&project_path).map_err(|_| "Project directory is unavailable")?;
+    let path = resolve_project_file(&project, Path::new(&source_path))?;
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_PREVIEW_BYTES {
         return Err("File preview is limited to 2 MB".into());
@@ -208,9 +273,25 @@ pub fn read_project_file(project_path: String, source_path: String) -> Result<Pr
             .unwrap_or("file")
             .to_string(),
         path: path.to_string_lossy().to_string(),
+        relative_path: path
+            .strip_prefix(project)
+            .map_err(|error| error.to_string())?
+            .to_string_lossy()
+            .to_string(),
         content,
         size: metadata.len(),
     })
+}
+
+#[tauri::command]
+pub fn list_project_directory(
+    project_path: String,
+    directory: Option<String>,
+) -> Result<Vec<ProjectEntry>, String> {
+    project_entries(
+        Path::new(&project_path),
+        Path::new(directory.as_deref().unwrap_or("")),
+    )
 }
 
 #[tauri::command]
@@ -234,7 +315,7 @@ pub fn open_terminal(path: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_file, read_project_file, resolve_project_file};
+    use super::{download_file, project_entries, read_project_file, resolve_project_file};
     use std::{fs, path::Path};
     use uuid::Uuid;
 
@@ -296,7 +377,26 @@ mod tests {
         let file = read_project_file(root.to_string_lossy().to_string(), "preview.md".to_string())
             .unwrap();
         assert_eq!(file.name, "preview.md");
+        assert_eq!(file.relative_path, "preview.md");
         assert_eq!(file.content, "# Preview");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lists_project_entries_without_leaving_the_project() {
+        let root = std::env::temp_dir().join(format!("claude-desk-tree-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("README.md"), "readme").unwrap();
+        fs::write(root.join("src/main.js"), "main").unwrap();
+
+        let entries = project_entries(&root, Path::new("")).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "src");
+        assert_eq!(entries[0].kind, "directory");
+        assert_eq!(entries[1].name, "README.md");
+        assert_eq!(entries[1].kind, "file");
+        assert!(project_entries(&root, Path::new("..")).is_err());
 
         fs::remove_dir_all(root).unwrap();
     }

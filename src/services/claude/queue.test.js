@@ -21,6 +21,14 @@ describe('Claude supplemental message queue', () => {
     })
   })
 
+  it('keeps an external skill binding with a queued message', () => {
+    const result = createQueuedMessage({
+      id: 'skill', conversation, project, content: '/review check', attachments: [],
+      skill: { name: 'review', path: '/tmp/review/SKILL.md' }, createdAt: 'now',
+    })
+    expect(result.skill).toEqual({ name: 'review', path: '/tmp/review/SKILL.md' })
+  })
+
   it('moves the selected message to the front for immediate steering', () => {
     const result = prioritizeQueuedMessage([queued('one'), queued('two'), queued('three')], 'two')
     expect(result.map(({ id, status }) => ({ id, status }))).toEqual([

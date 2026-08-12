@@ -3,10 +3,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowUp, File, Paperclip, Square, X } from 'lucide-vue-next'
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { clipboardImageFromEvent } from '../../services/attachments'
+import { attachmentTypeLabel, clipboardImageFromEvent, copyAttachmentPaths } from '../../services/attachments'
 import { shouldSubmitComposer } from '../../services/composerKeyboard'
 import { resizeComposerTextarea } from '../../services/composerTextarea'
-import { matchingSkills, slashSkillQuery } from '../../services/skills'
+import { matchingSkills, selectedSkillInput, slashSkillQuery } from '../../services/skills'
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
@@ -17,23 +17,47 @@ import { useI18n } from '../../services/i18n'
 const store = useWorkspaceStore()
 const { t } = useI18n()
 const text = ref('')
-const attachments = ref([])
+const attachmentDrafts = ref({})
+const skillDrafts = ref({})
 const input = ref(null)
 const adding = ref(false)
 const composition = { composing: false, compositionEndedAt: -Infinity }
 const activeConversationId = computed(() => store.activeConversationId)
+const attachments = computed({
+  get: () => attachmentDrafts.value[activeConversationId.value] || [],
+  set: (value) => {
+    if (!activeConversationId.value) return
+    if (value.length) attachmentDrafts.value[activeConversationId.value] = value
+    else delete attachmentDrafts.value[activeConversationId.value]
+  },
+})
 const skills = ref([])
+const selectedSkill = computed({
+  get: () => skillDrafts.value[activeConversationId.value] || null,
+  set: (value) => {
+    if (!activeConversationId.value) return
+    if (value) skillDrafts.value[activeConversationId.value] = value
+    else delete skillDrafts.value[activeConversationId.value]
+  },
+})
 const skillIndex = ref(0)
 const skillMenuDismissed = ref(false)
 const skillQuery = computed(() => slashSkillQuery(text.value))
 const visibleSkills = computed(() => matchingSkills(skills.value, skillQuery.value))
 const skillMenuOpen = computed(() => skillQuery.value !== null && !skillMenuDismissed.value && visibleSkills.value.length > 0)
 
-async function addPaths(paths) {
-  if (!store.activeConversationId || !paths?.length) return
+async function addPaths(paths, conversationId = store.activeConversationId) {
+  if (!conversationId || !paths?.length) return
   adding.value = true
   try {
-    for (const path of paths) attachments.value.push(await desktop.copyAttachment(store.activeConversationId, path))
+    const result = await copyAttachmentPaths(paths, conversationId, desktop.copyAttachment)
+    if (result.attachments.length) {
+      attachmentDrafts.value[conversationId] = [
+        ...(attachmentDrafts.value[conversationId] || []),
+        ...result.attachments,
+      ]
+    }
+    if (result.errors.length) store.error = result.errors.map(({ path, error }) => `${path}: ${error}`).join('\n')
   } catch (error) { store.error = String(error) }
   finally { adding.value = false }
 }
@@ -56,10 +80,12 @@ async function send() {
   const conversationId = store.activeConversationId
   const outgoing = attachments.value
   const content = text.value
+  const skill = selectedSkill.value
   text.value = ''
+  selectedSkill.value = null
   attachments.value = []
   store.setDraft(conversationId, '')
-  await store.sendMessage(content, outgoing)
+  await store.sendMessage(content, outgoing, skill)
 }
 
 function keydown(event) {
@@ -94,7 +120,9 @@ function handleSkillKeydown(event) {
 
 function chooseSkill(skill) {
   if (!skill) return
-  text.value = `/${skill.name} `
+  const selected = selectedSkillInput(skill)
+  text.value = selected.text
+  selectedSkill.value = selected.skill
   skillIndex.value = 0
   nextTick(focus)
 }
@@ -107,7 +135,7 @@ function compositionEnd() {
 
 function focus() { input.value?.focus() }
 function resizeInput() { resizeComposerTextarea(input.value) }
-function dropped(event) { addPaths(event.detail) }
+function dropped(event) { addPaths(event.detail?.paths, event.detail?.conversationId) }
 function activateQueued(messageId) {
   if (store.activeConversationId) store.sendQueuedMessageNow(store.activeConversationId, messageId)
 }
@@ -115,18 +143,27 @@ function removeQueued(messageId) {
   if (store.activeConversationId) store.removeQueuedMessage(store.activeConversationId, messageId)
 }
 async function loadSkills() {
-  if (!store.activeProject?.path) {
+  const projectPath = store.activeProject?.path
+  if (!projectPath) {
     skills.value = []
     return
   }
-  try { skills.value = await desktop.listClaudeSkills(store.activeProject.path) }
+  try {
+    const result = await desktop.listClaudeSkills(projectPath)
+    if (store.activeProject?.path === projectPath) skills.value = result
+  }
   catch { skills.value = [] }
 }
 watch(text, (value) => {
+  const prefix = selectedSkill.value ? `/${selectedSkill.value.name}` : ''
+  if (prefix && value !== prefix && !value.startsWith(`${prefix} `)) selectedSkill.value = null
   store.setDraft(activeConversationId.value, value)
   skillIndex.value = 0
   skillMenuDismissed.value = false
   nextTick(resizeInput)
+})
+watch(skillQuery, (next, previous) => {
+  if (next !== null && previous === null) loadSkills()
 })
 watch(activeConversationId, (next, previous) => {
   if (previous && previous !== next) store.setDraft(previous, text.value)
@@ -158,10 +195,12 @@ onBeforeUnmount(() => {
         @remove="removeQueued"
       />
       <div v-if="attachments.length" class="attachment-strip">
-        <div v-for="(attachment, index) in attachments" :key="attachment.id" class="attachment-card">
-          <img v-if="attachment.kind === 'image'" :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
-          <div v-else class="file-thumb"><File :size="21" /></div>
-          <span>{{ attachment.name }}</span>
+        <div v-for="(attachment, index) in attachments" :key="attachment.id" class="attachment-card" :title="attachment.name">
+          <div class="attachment-thumb">
+            <img v-if="attachment.kind === 'image'" :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
+            <File v-else :size="23" />
+          </div>
+          <span><strong>{{ attachment.name }}</strong><small>{{ attachmentTypeLabel(attachment) }}</small></span>
           <button :title="t('composer.removeAttachment')" @click="attachments.splice(index, 1)"><X :size="13" /></button>
         </div>
       </div>

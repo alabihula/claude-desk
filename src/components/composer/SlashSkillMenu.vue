@@ -24,7 +24,7 @@ const { t } = useI18n()
     >
       <Command :size="15" />
       <span class="slash-skill-copy"><strong>/{{ skill.name }}</strong><small>{{ skill.description || t('skills.noDescription') }}</small></span>
-      <em>{{ t(skill.scope === 'project' ? 'skills.project' : 'skills.personal') }}</em>
+      <em>{{ t(`skills.${skill.scope}`) }}</em>
       <CornerDownLeft v-if="index === activeIndex" :size="13" />
     </button>
   </div>

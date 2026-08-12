@@ -1,13 +1,13 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { FileCode2, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Terminal, X } from 'lucide-vue-next'
+import { Files, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Terminal, X } from 'lucide-vue-next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useWorkspaceStore } from '../stores/workspace'
 import { desktop } from '../services/desktop'
 import ChatComposer from '../components/composer/ChatComposer.vue'
 import MessageList from '../components/conversation/MessageList.vue'
 import ChangesButton from '../components/diff/ChangesButton.vue'
-import FilePreview from '../components/files/FilePreview.vue'
+import FileWorkspace from '../components/files/FileWorkspace.vue'
 import { useI18n } from '../services/i18n'
 
 const store = useWorkspaceStore()
@@ -50,22 +50,23 @@ onBeforeUnmount(() => unlistenResize?.())
         </div>
       </div>
       <div class="header-actions">
+        <button class="text-button" :class="{ active: store.workspaceView === 'files' }" :title="t('workspace.filesShortcut')" @click="store.workspaceView = 'files'"><Files :size="15" /> {{ t('workspace.files') }}</button>
         <ChangesButton />
         <button class="text-button" @click="store.newConversation"><Plus :size="15" /> {{ t('workspace.newChat') }}</button>
         <button class="icon-button" :title="t('workspace.openTerminal')" @click="desktop.openTerminal(store.activeProject.path)"><Terminal :size="17" /></button>
       </div>
     </header>
 
-    <nav v-if="store.filePreview" class="workspace-tabs">
+    <nav v-if="store.workspaceView === 'files' || store.filePreview" class="workspace-tabs">
       <button class="workspace-tab" :class="{ active: store.workspaceView === 'conversation' }" @click="store.workspaceView = 'conversation'"><MessageSquare :size="13" /> {{ t('workspace.conversation') }}</button>
-      <div class="workspace-tab file-tab" :class="{ active: store.workspaceView === 'file' }">
-        <button class="file-tab-main" :title="store.filePreview.path" @click="store.workspaceView = 'file'"><FileCode2 :size="13" /><span>{{ store.filePreview.name }}</span></button>
+      <div class="workspace-tab file-tab" :class="{ active: store.workspaceView === 'files' }">
+        <button class="file-tab-main" :title="store.filePreview?.path" @click="store.workspaceView = 'files'"><Files :size="13" /><span>{{ store.filePreview?.name || t('workspace.files') }}</span></button>
         <button class="file-tab-close" :title="t('workspace.closeFile')" @click="store.closeFilePreview"><X :size="12" /></button>
       </div>
     </nav>
 
     <template v-if="store.activeProject && store.activeConversation">
-      <FilePreview v-if="store.workspaceView === 'file' && store.filePreview" />
+      <FileWorkspace v-if="store.workspaceView === 'files'" />
       <template v-else>
         <MessageList :conversation-id="store.activeConversationId" :messages="store.activeMessages" :attachments-by-message="store.activeAttachments" :run="store.activeRun">
           <div v-if="!store.activeMessages.length && !store.activeRun" class="conversation-empty">

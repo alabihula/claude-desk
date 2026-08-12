@@ -56,6 +56,7 @@ pub fn run() {
             files::save_clipboard_image,
             files::resolve_local_files,
             files::download_file,
+            files::list_project_directory,
             files::read_project_file,
             files::open_in_editor,
             files::reveal_path,

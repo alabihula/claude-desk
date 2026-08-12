@@ -1,4 +1,4 @@
-use crate::{context, data, platform};
+use crate::{context, data, platform, skills};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,6 +40,7 @@ pub struct ClaudeRequest {
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, String>>,
     pub permission_mode: Option<String>,
+    pub skill_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -244,6 +245,16 @@ pub async fn send_claude(
             "--include-partial-messages",
             "--replay-user-messages",
         ]);
+    if let Some(skill_path) = request.skill_path.as_deref() {
+        // External Codex skills are shown only when the backend can still
+        // resolve them from an enabled source at dispatch time.
+        let skill_dir = skills::resolve_external_skill(
+            &app,
+            Path::new(&request.project_path),
+            Path::new(skill_path),
+        )?;
+        command.arg("--add-dir").arg(skill_dir);
+    }
     // Attachments are app-owned copies outside the project working directory.
     let attachment_root = app
         .path()

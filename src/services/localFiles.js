@@ -52,3 +52,22 @@ export function formatFileSize(bytes) {
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`
   return `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`
 }
+
+export function selectionLineRange(content, start, end) {
+  const safeStart = Math.max(0, Math.min(Number(start) || 0, content.length))
+  const safeEnd = Math.max(safeStart, Math.min(Number(end) || 0, content.length))
+  if (safeStart === safeEnd) return null
+  const startLine = content.slice(0, safeStart).split('\n').length
+  const endLine = content.slice(0, Math.max(safeStart, safeEnd - 1)).split('\n').length
+  return { startLine, endLine }
+}
+
+export function fileSelectionPrompt(path, content, start, end, reference = '') {
+  const range = selectionLineRange(content, start, end)
+  if (!range) return ''
+  const selected = content.slice(start, end)
+  const longestFence = Math.max(0, ...[...selected.matchAll(/`+/g)].map((match) => match[0].length))
+  const fence = '`'.repeat(Math.max(3, longestFence + 1))
+  const fallback = `${path}:${range.startLine}${range.startLine === range.endLine ? '' : `-${range.endLine}`}`
+  return `${reference || fallback}\n\n${fence}\n${selected}\n${fence}`
+}

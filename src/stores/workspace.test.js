@@ -116,6 +116,25 @@ describe('workspace supplemental messages', () => {
     }))
   })
 
+  it('dispatches an external skill as a readable instruction file instead of a fake slash command', async () => {
+    const store = setupStore()
+
+    await store.sendMessage('/superpowers:brainstorming 设计登录方案', [], {
+      name: 'superpowers:brainstorming',
+      path: '/tmp/superpowers/skills/brainstorming/SKILL.md',
+    })
+
+    expect(desktop.saveMessage).toHaveBeenCalledWith(
+      'conversation-1',
+      'user',
+      '/superpowers:brainstorming 设计登录方案',
+    )
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
+      skillPath: '/tmp/superpowers/skills/brainstorming/SKILL.md',
+      prompt: expect.stringContaining('User request: 设计登录方案'),
+    }))
+  })
+
   it('waits for the process exit before declaring a successful result complete', async () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()
@@ -204,7 +223,7 @@ describe('workspace supplemental messages', () => {
     await store.openFile('/tmp/project/notes.md')
 
     expect(desktop.readProjectFile).toHaveBeenCalledWith('/tmp/project', '/tmp/project/notes.md')
-    expect(store.workspaceView).toBe('file')
+    expect(store.workspaceView).toBe('files')
     expect(store.filePreview).toMatchObject({ name: 'notes.md', content: '# Notes', loading: false })
   })
 
@@ -216,6 +235,17 @@ describe('workspace supplemental messages', () => {
 
     expect(desktop.openInEditor).toHaveBeenCalledWith('/tmp/project/src/main.js', 12, 'vscode')
     expect(desktop.readProjectFile).not.toHaveBeenCalled()
+  })
+
+  it('appends selected file context to the current draft', () => {
+    const store = setupStore()
+    store.setDraft('conversation-1', 'Review this carefully.')
+
+    store.appendDraft('conversation-1', '请查看 src/main.js 第 2 行：\n\n```\nconst value = 1\n```')
+
+    expect(store.drafts['conversation-1']).toBe(
+      'Review this carefully.\n\n请查看 src/main.js 第 2 行：\n\n```\nconst value = 1\n```',
+    )
   })
 
   it('keeps the current project selected when another project is removed', async () => {

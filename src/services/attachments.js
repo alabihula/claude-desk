@@ -10,6 +10,23 @@ export async function clipboardImageFromEvent(event) {
   return null
 }
 
+export async function copyAttachmentPaths(paths, conversationId, copyAttachment) {
+  const uniquePaths = [...new Set((paths || []).filter((path) => typeof path === 'string' && path))]
+  const attachments = []
+  const errors = []
+  for (const path of uniquePaths) {
+    try { attachments.push(await copyAttachment(conversationId, path)) }
+    catch (error) { errors.push({ path, error: String(error) }) }
+  }
+  return { attachments, errors }
+}
+
+export function attachmentTypeLabel(attachment) {
+  const extension = attachment.name?.split('.').pop()
+  if (extension && extension !== attachment.name) return extension.toUpperCase()
+  return attachment.kind === 'image' ? 'IMAGE' : 'FILE'
+}
+
 export function attachmentPrompt(content, attachments) {
   if (!attachments.length) return content
   const paths = attachments.map((item) => `- ${item.path}`).join('\n')

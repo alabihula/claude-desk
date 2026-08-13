@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { useWorkspaceStore } from '../stores/workspace'
+import { currentPlatform, platformShortcut, platformTranslation } from './platform'
 
 export const SUPPORTED_LANGUAGES = ['en', 'zh-CN']
 
@@ -11,7 +12,21 @@ const messages = {
     'common.close': 'Close',
     'common.loading': 'Loading…',
     'common.previewUnavailable': 'Preview unavailable',
-    'common.showInFinder': 'Show in Finder',
+    'platform.macos.showInFileManager': 'Show in Finder',
+    'platform.macos.openTerminal': 'Open in Terminal',
+    'platform.macos.localNote': 'Projects stay on your Mac. Removing one here never deletes its files.',
+    'platform.macos.revealAttachment': 'Show {name} in Finder',
+    'platform.macos.notFoundBody': "Claude Desk couldn't find {command} in your login shell.",
+    'platform.windows.showInFileManager': 'Show in File Explorer',
+    'platform.windows.openTerminal': 'Open in terminal',
+    'platform.windows.localNote': 'Projects stay on this PC. Removing one here never deletes its files.',
+    'platform.windows.revealAttachment': 'Show {name} in File Explorer',
+    'platform.windows.notFoundBody': "Claude Desk couldn't find {command} in your Windows environment.",
+    'platform.other.showInFileManager': 'Show in file manager',
+    'platform.other.openTerminal': 'Open in terminal',
+    'platform.other.localNote': 'Projects stay on this computer. Removing one here never deletes its files.',
+    'platform.other.revealAttachment': 'Show {name} in file manager',
+    'platform.other.notFoundBody': "Claude Desk couldn't find {command} in your system environment.",
     'sidebar.projects': 'Projects',
     'sidebar.conversations': 'Conversations',
     'sidebar.currentView': 'Use current project view',
@@ -26,8 +41,6 @@ const messages = {
     'sidebar.project': 'Project',
     'sidebar.settings': 'Settings',
     'sidebar.claudeNotFound': 'Claude not found',
-    'sidebar.reveal': 'Reveal in Finder',
-    'sidebar.terminal': 'Open in Terminal',
     'sidebar.removeProject': 'Remove Project',
     'sidebar.rename': 'Rename',
     'sidebar.deleteConversation': 'Delete Conversation',
@@ -44,20 +57,17 @@ const messages = {
     'conversation.jumpToTurn': 'Jump to turn {index}: {preview}',
     'home.subtitle': 'Your Claude Code workspace.',
     'home.addProject': 'Add Project',
-    'home.localNote': 'Projects stay on your Mac. Removing one here never deletes its files.',
-    'workspace.showSidebar': 'Show sidebar (⌘B)',
-    'workspace.hideSidebar': 'Hide sidebar (⌘B)',
+    'workspace.showSidebar': 'Show sidebar ({shortcut})',
+    'workspace.hideSidebar': 'Hide sidebar ({shortcut})',
     'workspace.noConversation': 'No conversation',
     'workspace.newChat': 'New chat',
-    'workspace.openTerminal': 'Open Terminal',
     'workspace.files': 'Files',
-    'workspace.filesShortcut': 'Project files (⌘P)',
+    'workspace.filesShortcut': 'Project files ({shortcut})',
     'workspace.conversation': 'Conversation',
     'workspace.closeFile': 'Close file',
     'workspace.emptyTitle': 'What are we building?',
     'workspace.emptyBody': 'Claude can read, edit, and run code in {project}.',
     'workspace.notFound': 'Claude Code not found',
-    'workspace.notFoundBody': "Claude Desk couldn't find {command} in your login shell.",
     'workspace.openSettings': 'Open Settings',
     'workspace.startTitle': 'Start a conversation',
     'workspace.startBody': 'Ask Claude to work in {project}.',
@@ -196,7 +206,6 @@ const messages = {
     'skills.noDescription': 'Reusable skill',
     'message.you': 'You',
     'message.preview': 'Preview {name}',
-    'message.reveal': 'Reveal {name}',
     'message.copy': 'Copy',
     'message.copied': 'Copied',
     'message.copyCode': 'Copy code',
@@ -248,7 +257,21 @@ const messages = {
     'common.close': '关闭',
     'common.loading': '加载中…',
     'common.previewUnavailable': '无法预览',
-    'common.showInFinder': '在访达中显示',
+    'platform.macos.showInFileManager': '在访达中显示',
+    'platform.macos.openTerminal': '在终端中打开',
+    'platform.macos.localNote': '项目仅保存在你的 Mac 上，从这里移除不会删除项目文件。',
+    'platform.macos.revealAttachment': '在访达中显示 {name}',
+    'platform.macos.notFoundBody': 'Claude Desk 无法在登录 Shell 中找到 {command}。',
+    'platform.windows.showInFileManager': '在文件资源管理器中显示',
+    'platform.windows.openTerminal': '在终端中打开',
+    'platform.windows.localNote': '项目仅保存在这台电脑上，从这里移除不会删除项目文件。',
+    'platform.windows.revealAttachment': '在文件资源管理器中显示 {name}',
+    'platform.windows.notFoundBody': 'Claude Desk 无法在 Windows 环境中找到 {command}。',
+    'platform.other.showInFileManager': '在文件管理器中显示',
+    'platform.other.openTerminal': '在终端中打开',
+    'platform.other.localNote': '项目仅保存在这台电脑上，从这里移除不会删除项目文件。',
+    'platform.other.revealAttachment': '在文件管理器中显示 {name}',
+    'platform.other.notFoundBody': 'Claude Desk 无法在系统环境中找到 {command}。',
     'sidebar.projects': '项目',
     'sidebar.conversations': '对话',
     'sidebar.currentView': '使用当前项目视图',
@@ -263,8 +286,6 @@ const messages = {
     'sidebar.project': '项目',
     'sidebar.settings': '设置',
     'sidebar.claudeNotFound': '未找到 Claude',
-    'sidebar.reveal': '在访达中显示',
-    'sidebar.terminal': '在终端中打开',
     'sidebar.removeProject': '移除项目',
     'sidebar.rename': '重命名',
     'sidebar.deleteConversation': '删除对话',
@@ -281,20 +302,17 @@ const messages = {
     'conversation.jumpToTurn': '跳转到第 {index} 轮：{preview}',
     'home.subtitle': '你的 Claude Code 工作空间。',
     'home.addProject': '添加项目',
-    'home.localNote': '项目仅保存在你的 Mac 上，从这里移除不会删除项目文件。',
-    'workspace.showSidebar': '展开侧边栏（⌘B）',
-    'workspace.hideSidebar': '收起侧边栏（⌘B）',
+    'workspace.showSidebar': '展开侧边栏（{shortcut}）',
+    'workspace.hideSidebar': '收起侧边栏（{shortcut}）',
     'workspace.noConversation': '暂无对话',
     'workspace.newChat': '新对话',
-    'workspace.openTerminal': '打开终端',
     'workspace.files': '文件',
-    'workspace.filesShortcut': '项目文件（⌘P）',
+    'workspace.filesShortcut': '项目文件（{shortcut}）',
     'workspace.conversation': '对话',
     'workspace.closeFile': '关闭文件',
     'workspace.emptyTitle': '想要构建什么？',
     'workspace.emptyBody': 'Claude 可以在 {project} 中读取、编辑并运行代码。',
     'workspace.notFound': '未找到 Claude Code',
-    'workspace.notFoundBody': 'Claude Desk 无法在登录 Shell 中找到 {command}。',
     'workspace.openSettings': '打开设置',
     'workspace.startTitle': '开始新对话',
     'workspace.startBody': '让 Claude 在 {project} 中工作。',
@@ -433,7 +451,6 @@ const messages = {
     'skills.noDescription': '通用技能',
     'message.you': '你',
     'message.preview': '预览 {name}',
-    'message.reveal': '显示 {name}',
     'message.copy': '复制',
     'message.copied': '已复制',
     'message.copyCode': '复制代码',
@@ -484,9 +501,12 @@ export function normalizeLanguage(language) {
   return SUPPORTED_LANGUAGES.includes(language) ? language : 'en'
 }
 
-export function translate(language, key, params = {}) {
-  const value = messages[normalizeLanguage(language)]?.[key] || messages.en[key] || key
-  return Object.entries(params).reduce((text, [name, replacement]) => text.replaceAll(`{${name}}`, String(replacement)), value)
+export function translate(language, key, params = {}, platform = currentPlatform) {
+  const targetKey = platformTranslation(key, platform)
+  const shortcutKey = key === 'workspace.filesShortcut' ? 'P' : key === 'workspace.showSidebar' || key === 'workspace.hideSidebar' ? 'B' : null
+  const defaults = shortcutKey ? { shortcut: platformShortcut(shortcutKey, platform) } : {}
+  const value = messages[normalizeLanguage(language)]?.[targetKey] || messages.en[targetKey] || targetKey
+  return Object.entries({ ...defaults, ...params }).reduce((text, [name, replacement]) => text.replaceAll(`{${name}}`, String(replacement)), value)
 }
 
 const ACTIVITY_KEYS = {

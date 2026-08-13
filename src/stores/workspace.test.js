@@ -15,6 +15,7 @@ vi.mock('../services/desktop', () => ({
     saveSettings: vi.fn(),
     touchProject: vi.fn(),
     touchConversation: vi.fn(),
+    createConversation: vi.fn(),
     refreshContextStats: vi.fn(),
     listMessages: vi.fn(),
     listAttachments: vi.fn(),
@@ -65,6 +66,7 @@ describe('workspace supplemental messages', () => {
     desktop.saveMessage.mockImplementation(async (conversationId, role, content, snippets = []) => ({ id: `message-${++messageId}`, conversationId, role, content, snippets }))
     desktop.sendClaude.mockResolvedValue('run-next')
     desktop.interruptClaude.mockResolvedValue()
+    desktop.createConversation.mockResolvedValue({ id: 'conversation-new', projectId: 'project-1', title: 'New conversation' })
     desktop.listConversations.mockResolvedValue([])
     desktop.listMessages.mockResolvedValue([])
     desktop.listAttachments.mockResolvedValue([])
@@ -73,6 +75,20 @@ describe('workspace supplemental messages', () => {
       isRepository: true, branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0, additions: 0, deletions: 0,
     })
     desktop.refreshContextStats.mockResolvedValue(null)
+  })
+
+  it('keeps the selected project when a new-conversation click passes an event argument', async () => {
+    const store = setupStore()
+    store.conversations = []
+    store.conversationsByProject['project-1'] = []
+    store.activeConversationId = null
+
+    await store.newConversation({ type: 'click' })
+
+    expect(store.activeProjectId).toBe('project-1')
+    expect(store.activeConversationId).toBe('conversation-new')
+    expect(desktop.createConversation).toHaveBeenCalledWith('project-1')
+    expect(desktop.touchProject).not.toHaveBeenCalled()
   })
 
   it('queues new input without persisting it while Claude is running', async () => {

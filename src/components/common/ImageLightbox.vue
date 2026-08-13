@@ -14,7 +14,7 @@ const { t } = useI18n()
     <header>
       <span>{{ store.previewAttachment.name }}</span>
       <div>
-        <button :title="t('common.showInFinder')" @click="desktop.revealPath(store.previewAttachment.path)"><FolderOpen :size="18" /></button>
+        <button :title="t('common.showInFileManager')" @click="desktop.revealPath(store.previewAttachment.path)"><FolderOpen :size="18" /></button>
         <button :title="t('common.close')" @click="store.previewAttachment = null"><X :size="20" /></button>
       </div>
     </header>

@@ -15,9 +15,11 @@ import { desktop } from '../../services/desktop'
 import BrandMark from '../common/BrandMark.vue'
 import SidebarNavigation from './SidebarNavigation.vue'
 import { useI18n } from '../../services/i18n'
+import { platformProfile } from '../../services/platform'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
+const { contextMenuWidth } = platformProfile()
 const menu = ref(null)
 const renamingConversationId = ref(null)
 const renameTitle = ref('')
@@ -50,7 +52,7 @@ function toggleMenu(event, type, item) {
   menu.value = {
     type,
     item,
-    left: Math.max(8, rect.right - 188),
+    left: Math.max(8, rect.right - contextMenuWidth),
     top: Math.min(window.innerHeight - height - 8, rect.bottom + 4),
   }
 }
@@ -162,7 +164,7 @@ onBeforeUnmount(() => {
         class="sidebar-context-menu"
         data-sidebar-menu
         role="menu"
-        :style="{ left: `${menu.left}px`, top: `${menu.top}px` }"
+        :style="{ left: `${menu.left}px`, top: `${menu.top}px`, width: `${contextMenuWidth}px` }"
         @click.stop
       >
         <template v-if="menu.type === 'project'">

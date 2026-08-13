@@ -264,11 +264,13 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async newConversation(projectId = this.activeProjectId) {
-      if (!projectId) return
-      if (this.activeProjectId !== projectId) await this.selectProject(projectId)
-      const conversation = await desktop.createConversation(projectId)
+      // Direct Vue event bindings may pass a MouseEvent; never let it replace the selected project id.
+      const targetProjectId = typeof projectId === 'string' ? projectId : this.activeProjectId
+      if (!targetProjectId) return
+      if (this.activeProjectId !== targetProjectId) await this.selectProject(targetProjectId)
+      const conversation = await desktop.createConversation(targetProjectId)
       this.conversations.unshift(conversation)
-      this.conversationsByProject[projectId] = this.conversations
+      this.conversationsByProject[targetProjectId] = this.conversations
       this.messages[conversation.id] = []
       this.activeConversationId = conversation.id
     },

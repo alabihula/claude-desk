@@ -46,7 +46,7 @@ watch(() => store.filePreview?.path, () => { selection.value = null })
       <span class="file-preview-icon"><FileText :size="18" /></span>
       <div><strong>{{ store.filePreview.name }}</strong><small :title="store.filePreview.path">{{ store.filePreview.path }} · {{ formatFileSize(store.filePreview.size) }}</small></div>
       <button class="file-selection-button" :disabled="!selection" @click="addSelection"><MessageSquarePlus :size="15" />{{ selection ? t('files.addSelectionWithLines', { lines: selectionLabel }) : t('files.selectText') }}</button>
-      <button class="icon-button" :title="t('common.showInFinder')" @click="desktop.revealPath(store.filePreview.path)"><FolderOpen :size="17" /></button>
+      <button class="icon-button" :title="t('common.showInFileManager')" @click="desktop.revealPath(store.filePreview.path)"><FolderOpen :size="17" /></button>
     </header>
     <div v-if="store.filePreview.loading" class="file-preview-empty">{{ t('file.loading') }}</div>
     <div v-else-if="store.filePreview.error" class="file-preview-empty error"><strong>{{ t('common.previewUnavailable') }}</strong><span>{{ store.filePreview.error }}</span></div>

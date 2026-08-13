@@ -12,6 +12,7 @@ import Home from './views/Home.vue'
 import Workspace from './views/Workspace.vue'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './services/i18n'
+import { currentPlatform, isPrimaryShortcut } from './services/platform'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
@@ -19,11 +20,12 @@ const dragging = ref(false)
 let unlistenDrag
 
 function shortcuts(event) {
-  if (event.metaKey && event.key.toLowerCase() === 'n') { event.preventDefault(); store.newConversation() }
-  if (event.metaKey && event.key.toLowerCase() === 'k') { event.preventDefault(); window.dispatchEvent(new Event('claude-desk-focus')) }
-  if (event.metaKey && event.key.toLowerCase() === 'b') { event.preventDefault(); store.sidebarCollapsed = !store.sidebarCollapsed }
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); store.workspaceView = 'files' }
-  if (event.metaKey && event.key === ',') { event.preventDefault(); store.settingsOpen = true }
+  const primary = isPrimaryShortcut(event)
+  if (primary && event.key.toLowerCase() === 'n') { event.preventDefault(); store.newConversation() }
+  if (primary && event.key.toLowerCase() === 'k') { event.preventDefault(); window.dispatchEvent(new Event('claude-desk-focus')) }
+  if (primary && event.key.toLowerCase() === 'b') { event.preventDefault(); store.sidebarCollapsed = !store.sidebarCollapsed }
+  if (primary && event.key.toLowerCase() === 'p') { event.preventDefault(); store.workspaceView = 'files' }
+  if (primary && event.key === ',') { event.preventDefault(); store.settingsOpen = true }
   if (event.key === 'Escape') {
     if (store.previewAttachment) store.previewAttachment = null
     else if (store.permissionsOpen) store.permissionsOpen = false
@@ -36,6 +38,7 @@ function shortcuts(event) {
 }
 
 onMounted(async () => {
+  document.documentElement.dataset.platform = currentPlatform
   window.addEventListener('keydown', shortcuts)
   await store.init()
   document.documentElement.dataset.theme = store.settings.theme

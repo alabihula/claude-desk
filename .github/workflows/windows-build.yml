@@ -2,9 +2,6 @@ name: Windows internal build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/windows-support
 
 jobs:
   build-windows-x64:
@@ -38,7 +35,16 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 
       - name: Build NSIS installer
-        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
+        shell: pwsh
+        run: |
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -eq $maxAttempts) { exit $LASTEXITCODE }
+            Write-Warning "NSIS build attempt $attempt failed; retrying on the same runner."
+            Start-Sleep -Seconds (10 * $attempt)
+          }
 
       - name: Verify Windows GUI subsystem
         shell: pwsh

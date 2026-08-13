@@ -20,10 +20,26 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo dependencies and build output
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          shared-key: windows-x64
+          cache-on-failure: true
+
+      # Tauri stores its verified NSIS toolchain here on Windows. The lockfile hash
+      # prevents a Tauri CLI upgrade from silently reusing an incompatible toolset.
+      - name: Cache Tauri NSIS toolchain
+        uses: actions/cache@v5
+        with:
+          path: ~/AppData/Local/tauri/NSIS
+          key: ${{ runner.os }}-tauri-nsis-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

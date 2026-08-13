@@ -15,7 +15,7 @@ export const desktop = {
   loadContextStats: (conversationId) => invoke('load_context_stats', { conversationId }),
   refreshContextStats: (conversationId) => invoke('refresh_context_stats', { conversationId }),
   listMessages: (conversationId) => invoke('list_messages', { conversationId }),
-  saveMessage: (conversationId, role, content) => invoke('save_message', { conversationId, role, content }),
+  saveMessage: (conversationId, role, content, snippets = []) => invoke('save_message', { conversationId, role, content, snippets }),
   listAttachments: (conversationId) => invoke('list_attachments', { conversationId }),
   linkAttachments: (messageId, attachmentIds) => invoke('link_attachments', { messageId, attachmentIds }),
   loadSettings: () => invoke('load_settings'),

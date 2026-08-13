@@ -9,7 +9,10 @@ export function conversationTurns(messages = [], attachmentsByMessage = {}) {
     .map((message, index) => ({
       id: message.id,
       index: index + 1,
-      preview: preview(message.content) || attachmentsByMessage[message.id]?.[0]?.name || 'Attachment',
+      preview: preview(message.content)
+        || message.snippets?.[0]?.path
+        || attachmentsByMessage[message.id]?.[0]?.name
+        || 'Attachment',
     }))
 }
 

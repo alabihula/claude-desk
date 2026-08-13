@@ -151,13 +151,13 @@ describe('ChatComposer attachments', () => {
     app.mount(root)
     await flushPromises()
 
-    expect(root.querySelector('.snippet-drafts-chip')?.textContent).toContain('1 个已选文本片段')
-    expect(root.querySelector('.snippet-drafts-tooltip')?.textContent).toContain('src/main.js')
-    expect(root.querySelector('.snippet-drafts-tooltip')?.textContent).toContain('第 4-7 行')
+    expect(root.querySelector('.snippet-capsule')?.textContent).toContain('1 个已选文本片段')
+    expect(root.querySelector('.snippet-capsule-tooltip')?.textContent).toContain('src/main.js')
+    expect(root.querySelector('.snippet-capsule-tooltip')?.textContent).toContain('第 4-7 行')
 
     store.activeConversationId = 'conversation-2'
     await nextTick()
-    expect(root.querySelector('.snippet-drafts-chip')).toBeNull()
+    expect(root.querySelector('.snippet-capsule')).toBeNull()
     store.activeConversationId = 'conversation-1'
     await nextTick()
 
@@ -167,7 +167,7 @@ describe('ChatComposer attachments', () => {
       path: 'src/main.js', startLine: 4, endLine: 7, content: 'const answer = 42',
     })])
     expect(store.snippetDrafts['conversation-1']).toBeUndefined()
-    expect(root.querySelector('.snippet-drafts-chip')).toBeNull()
+    expect(root.querySelector('.snippet-capsule')).toBeNull()
   })
 
   it('removes all selected text fragments from the capsule action', async () => {
@@ -186,8 +186,8 @@ describe('ChatComposer attachments', () => {
     app.mount(root)
     await flushPromises()
 
-    expect(root.querySelector('.snippet-drafts-chip')?.textContent).toContain('2 selected text fragments')
-    root.querySelector('.snippet-drafts-chip > button').click()
+    expect(root.querySelector('.snippet-capsule')?.textContent).toContain('2 selected text fragments')
+    root.querySelector('.snippet-capsule > button').click()
     await nextTick()
     expect(store.snippetDrafts['conversation-1']).toBeUndefined()
   })

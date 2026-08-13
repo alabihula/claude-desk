@@ -401,7 +401,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const content = queued.content || (queued.snippets.length
         ? snippetOnlyMessage(this.settings.language, queued.snippets.length)
         : '请查看附件。')
-      const userMessage = await desktop.saveMessage(queued.conversationId, 'user', content)
+      const userMessage = await desktop.saveMessage(queued.conversationId, 'user', content, queued.snippets)
       if (queued.attachments.length) {
         await desktop.linkAttachments(userMessage.id, queued.attachments.map((item) => item.id))
         this.attachmentsByMessage[userMessage.id] = queued.attachments.map((item) => ({ ...item, messageId: userMessage.id }))

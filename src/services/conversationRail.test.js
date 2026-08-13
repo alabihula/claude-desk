@@ -20,4 +20,12 @@ describe('conversation rail', () => {
     expect(activeTurnFromOffsets(turns, [{ id: 'one', top: 20 }, { id: 'two', top: 150 }, { id: 'three', top: 340 }], 0)).toBe('one')
     expect(activeTurnFromOffsets(turns, [{ id: 'one', top: -220 }, { id: 'two', top: 30 }, { id: 'three', top: 300 }], 0)).toBe('two')
   })
+
+  it('uses persisted snippet paths before attachment names for empty turns', () => {
+    const turns = conversationTurns(
+      [{ id: 'one', role: 'user', content: '', snippets: [{ path: 'src/main.js' }] }],
+      { one: [{ name: 'requirements.md' }] },
+    )
+    expect(turns[0].preview).toBe('src/main.js')
+  })
 })

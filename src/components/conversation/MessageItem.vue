@@ -10,6 +10,7 @@ import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSiz
 import { codeCopyPayload, createMessageMarkdown, externalHttpUrl, writeClipboardText } from '../../services/markdown'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useI18n } from '../../services/i18n'
+import CodeSnippetCapsule from '../common/CodeSnippetCapsule.vue'
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -123,6 +124,7 @@ onBeforeUnmount(() => {
   <article v-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
   <article v-else class="message" :class="`message-${message.role}`">
     <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>
+    <CodeSnippetCapsule v-if="message.role === 'user'" :snippets="message.snippets || []" />
     <div class="message-body markdown-body" @click="handleMessageClick" v-html="rendered"></div>
     <div v-if="attachments.length" class="message-attachments">
       <button

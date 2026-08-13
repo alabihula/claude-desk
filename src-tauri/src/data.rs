@@ -47,7 +47,17 @@ pub struct Message {
     pub conversation_id: String,
     pub role: String,
     pub content: String,
+    pub snippets: Vec<CodeSnippet>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeSnippet {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub content: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -94,6 +104,10 @@ fn has_column(connection: &Connection, table: &str, column: &str) -> Result<bool
 
 pub fn migrate(app: &AppHandle) -> Result<(), String> {
     let connection = connect(app)?;
+    migrate_connection(&connection)
+}
+
+fn migrate_connection(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
             "
@@ -123,6 +137,7 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
               conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
               role TEXT NOT NULL,
               content TEXT NOT NULL,
+              snippets TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS messages_conversation_idx
@@ -152,12 +167,20 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
 
-    if !has_column(&connection, "attachments", "message_id")? {
+    if !has_column(connection, "attachments", "message_id")? {
         connection
             .execute("ALTER TABLE attachments ADD COLUMN message_id TEXT", [])
             .map_err(|error| error.to_string())?;
     }
-    if !has_column(&connection, "projects", "sort_order")? {
+    if !has_column(connection, "messages", "snippets")? {
+        connection
+            .execute(
+                "ALTER TABLE messages ADD COLUMN snippets TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(connection, "projects", "sort_order")? {
         connection
             .execute(
                 "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
@@ -165,7 +188,7 @@ pub fn migrate(app: &AppHandle) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
     }
-    if !has_column(&connection, "conversations", "sort_order")? {
+    if !has_column(connection, "conversations", "sort_order")? {
         connection
             .execute(
                 "ALTER TABLE conversations ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
@@ -485,7 +508,7 @@ pub fn refresh_context_stats(
 #[tauri::command]
 pub fn list_messages(app: AppHandle, conversation_id: String) -> Result<Vec<Message>, String> {
     let connection = connect(&app)?;
-    let mut statement = connection.prepare("SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at").map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare("SELECT id, conversation_id, role, content, snippets, created_at FROM messages WHERE conversation_id = ?1 ORDER BY created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([conversation_id], |row| {
             Ok(Message {
@@ -493,7 +516,8 @@ pub fn list_messages(app: AppHandle, conversation_id: String) -> Result<Vec<Mess
                 conversation_id: row.get(1)?,
                 role: row.get(2)?,
                 content: row.get(3)?,
-                created_at: row.get(4)?,
+                snippets: parse_snippets(&row.get::<_, String>(4)?),
+                created_at: row.get(5)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -507,19 +531,24 @@ pub fn save_message(
     conversation_id: String,
     role: String,
     content: String,
+    snippets: Option<Vec<CodeSnippet>>,
 ) -> Result<Message, String> {
     if !["user", "assistant", "system"].contains(&role.as_str()) {
         return Err("Invalid message role".into());
     }
+    let snippets = snippets.unwrap_or_default();
+    validate_snippets(&snippets)?;
+    let snippets_json = serde_json::to_string(&snippets).map_err(|error| error.to_string())?;
     let message = Message {
         id: Uuid::new_v4().to_string(),
         conversation_id,
         role,
         content,
+        snippets,
         created_at: now(),
     };
     let connection = connect(&app)?;
-    connection.execute("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![message.id, message.conversation_id, message.role, message.content, message.created_at]).map_err(|error| error.to_string())?;
+    connection.execute("INSERT INTO messages (id, conversation_id, role, content, snippets, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![message.id, message.conversation_id, message.role, message.content, snippets_json, message.created_at]).map_err(|error| error.to_string())?;
     connection
         .execute(
             "UPDATE conversations SET updated_at = ?1, last_opened_at = ?1 WHERE id = ?2",
@@ -527,6 +556,94 @@ pub fn save_message(
         )
         .map_err(|error| error.to_string())?;
     Ok(message)
+}
+
+fn parse_snippets(value: &str) -> Vec<CodeSnippet> {
+    serde_json::from_str(value).unwrap_or_default()
+}
+
+fn validate_snippets(snippets: &[CodeSnippet]) -> Result<(), String> {
+    if snippets.len() > 50
+        || snippets
+            .iter()
+            .map(|snippet| snippet.content.len())
+            .sum::<usize>()
+            > 2 * 1024 * 1024
+    {
+        return Err("Too many code snippets".into());
+    }
+    if snippets.iter().any(|snippet| {
+        snippet.path.trim().is_empty()
+            || snippet.path.len() > 4096
+            || snippet.content.is_empty()
+            || snippet.start_line == 0
+            || snippet.end_line < snippet.start_line
+    }) {
+        return Err("Invalid code snippet".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod message_tests {
+    use super::{has_column, migrate_connection, parse_snippets, validate_snippets, CodeSnippet};
+    use rusqlite::Connection;
+
+    #[test]
+    fn migrates_old_messages_with_an_empty_snippet_array() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE messages (
+                  id TEXT PRIMARY KEY,
+                  conversation_id TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO messages (id, conversation_id, role, content, created_at)
+                 VALUES ('old', 'conversation-1', 'user', 'hello', 'now')",
+                [],
+            )
+            .unwrap();
+
+        migrate_connection(&connection).unwrap();
+
+        assert!(has_column(&connection, "messages", "snippets").unwrap());
+        let value: String = connection
+            .query_row(
+                "SELECT snippets FROM messages WHERE id = 'old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(parse_snippets(&value).is_empty());
+    }
+
+    #[test]
+    fn validates_and_round_trips_message_snippets() {
+        let snippets = vec![CodeSnippet {
+            path: "src/main.rs".into(),
+            start_line: 4,
+            end_line: 7,
+            content: "fn main() {}".into(),
+        }];
+
+        validate_snippets(&snippets).unwrap();
+        let encoded = serde_json::to_string(&snippets).unwrap();
+        assert_eq!(parse_snippets(&encoded), snippets);
+        assert!(validate_snippets(&[CodeSnippet {
+            path: "".into(),
+            start_line: 0,
+            end_line: 0,
+            content: "".into(),
+        }])
+        .is_err());
+    }
 }
 
 #[tauri::command]

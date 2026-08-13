@@ -14,7 +14,10 @@ vi.mock('../services/desktop', () => ({
     reorderConversations: vi.fn(),
     saveSettings: vi.fn(),
     touchProject: vi.fn(),
+    touchConversation: vi.fn(),
     refreshContextStats: vi.fn(),
+    listMessages: vi.fn(),
+    listAttachments: vi.fn(),
     listConversations: vi.fn(),
     gitStatus: vi.fn(),
     gitEnvironment: vi.fn(),
@@ -59,10 +62,12 @@ describe('workspace supplemental messages', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     let messageId = 0
-    desktop.saveMessage.mockImplementation(async (conversationId, role, content) => ({ id: `message-${++messageId}`, conversationId, role, content }))
+    desktop.saveMessage.mockImplementation(async (conversationId, role, content, snippets = []) => ({ id: `message-${++messageId}`, conversationId, role, content, snippets }))
     desktop.sendClaude.mockResolvedValue('run-next')
     desktop.interruptClaude.mockResolvedValue()
     desktop.listConversations.mockResolvedValue([])
+    desktop.listMessages.mockResolvedValue([])
+    desktop.listAttachments.mockResolvedValue([])
     desktop.gitStatus.mockResolvedValue([])
     desktop.gitEnvironment.mockResolvedValue({
       isRepository: true, branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0, additions: 0, deletions: 0,
@@ -128,6 +133,7 @@ describe('workspace supplemental messages', () => {
       'conversation-1',
       'user',
       '/superpowers:brainstorming 设计登录方案',
+      [],
     )
     expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
       skillPath: '/tmp/superpowers/skills/brainstorming/SKILL.md',
@@ -204,7 +210,8 @@ describe('workspace supplemental messages', () => {
 
     await store.sendMessage('检查这里', [], null, snippets)
 
-    expect(desktop.saveMessage).toHaveBeenCalledWith('conversation-1', 'user', '检查这里')
+    expect(desktop.saveMessage).toHaveBeenCalledWith('conversation-1', 'user', '检查这里', snippets)
+    expect(store.activeMessages.at(-1).snippets).toEqual(snippets)
     expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
       prompt: expect.stringContaining('File: src/main.js (lines 2-3)\n```\none\ntwo\n```'),
     }))
@@ -217,10 +224,41 @@ describe('workspace supplemental messages', () => {
 
     await store.sendMessage('', [], null, snippets)
 
-    expect(desktop.saveMessage).toHaveBeenCalledWith('conversation-1', 'user', '请查看以下 1 个代码片段。')
+    expect(desktop.saveMessage).toHaveBeenCalledWith('conversation-1', 'user', '请查看以下 1 个代码片段。', snippets)
     expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
       prompt: expect.stringContaining('File: src/main.js (line 2)'),
     }))
+  })
+
+  it('reloads persisted snippets and linked dropped files with their user message', async () => {
+    const store = setupStore()
+    const snippets = [{ path: 'src/main.js', startLine: 2, endLine: 3, content: 'one\ntwo' }]
+    const message = { id: 'saved-user', conversationId: 'conversation-1', role: 'user', content: '检查输入', snippets }
+    const attachment = {
+      id: 'attachment-1', conversationId: 'conversation-1', messageId: 'saved-user',
+      kind: 'file', name: 'requirements.md', path: '/app-data/requirements.md', size: 32,
+    }
+    delete store.messages['conversation-1']
+    desktop.listMessages.mockResolvedValue([message])
+    desktop.listAttachments.mockResolvedValue([attachment])
+
+    await store.selectConversation('conversation-1')
+
+    expect(store.activeMessages).toEqual([message])
+    expect(store.activeAttachments['saved-user']).toEqual([attachment])
+  })
+
+  it('links a dropped file to the saved user message so it remains visible after sending', async () => {
+    const store = setupStore()
+    const attachment = {
+      id: 'attachment-1', conversationId: 'conversation-1', kind: 'file',
+      name: 'requirements.md', path: '/app-data/requirements.md', size: 32,
+    }
+
+    await store.sendMessage('检查附件', [attachment])
+
+    expect(desktop.linkAttachments).toHaveBeenCalledWith('message-1', ['attachment-1'])
+    expect(store.activeAttachments['message-1']).toEqual([{ ...attachment, messageId: 'message-1' }])
   })
 
   it('keeps queued supplements paused after an explicit stop', async () => {

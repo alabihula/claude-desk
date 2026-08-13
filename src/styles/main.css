@@ -273,16 +273,17 @@ button.workspace-tab { padding: 0 10px; gap: 6px; }.workspace-tab:hover { backgr
 .attachment-thumb { width: 46px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; border-radius: 9px; background: var(--surface); color: var(--text-muted); }.attachment-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .attachment-card > span { min-width: 0; display: grid; gap: 4px; }.attachment-card > span strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 560; }.attachment-card > span small { color: var(--text-faint); font-size: 10px; }
 .attachment-card > button { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); }.attachment-card > button:hover { background: var(--text); color: var(--app-bg); }
-.snippet-drafts { display: flex; padding: 2px 3px 6px; }
-.snippet-drafts-chip { position: relative; min-height: 36px; padding: 0 7px 0 11px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); color: var(--text-muted); font-size: 12px; font-weight: 560; outline: none; }
-.snippet-drafts-chip::before { content: ''; position: absolute; bottom: 100%; left: 0; width: 100%; height: 9px; display: none; }
-.snippet-drafts-chip:hover::before, .snippet-drafts-chip:focus-within::before { display: block; }
-.snippet-drafts-chip > svg { color: var(--text-faint); }
-.snippet-drafts-chip > button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); }
-.snippet-drafts-chip > button:hover { background: var(--text); color: var(--app-bg); }
-.snippet-drafts-tooltip { position: absolute; z-index: 38; bottom: calc(100% + 8px); left: 0; width: min(430px, calc(100vw - 72px)); max-height: 210px; padding: 10px; display: none; overflow-y: auto; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); }
-.snippet-drafts-chip:hover .snippet-drafts-tooltip, .snippet-drafts-chip:focus-within .snippet-drafts-tooltip { display: grid; gap: 7px; }
-.snippet-drafts-tooltip > strong { color: var(--text-faint); font-size: 9px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.snippet-capsule-wrap { display: flex; padding: 2px 3px 6px; }
+.snippet-capsule-sent { padding: 0 0 10px; }
+.snippet-capsule { position: relative; min-height: 36px; padding: 0 7px 0 11px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); color: var(--text-muted); font-size: 12px; font-weight: 560; outline: none; }
+.snippet-capsule::before { content: ''; position: absolute; bottom: 100%; left: 0; width: 100%; height: 9px; display: none; }
+.snippet-capsule:hover::before, .snippet-capsule:focus-within::before { display: block; }
+.snippet-capsule > svg { color: var(--text-faint); }
+.snippet-capsule > button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); }
+.snippet-capsule > button:hover { background: var(--text); color: var(--app-bg); }
+.snippet-capsule-tooltip { position: absolute; z-index: 38; bottom: calc(100% + 8px); left: 0; width: min(430px, calc(100vw - 72px)); max-height: 210px; padding: 10px; display: none; overflow-y: auto; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); }
+.snippet-capsule:hover .snippet-capsule-tooltip, .snippet-capsule:focus-within .snippet-capsule-tooltip { display: grid; gap: 7px; }
+.snippet-capsule-tooltip > strong { color: var(--text-faint); font-size: 9px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .snippet-source { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .snippet-source > span { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .snippet-source > small { color: var(--text-faint); font-size: 9px; white-space: nowrap; }

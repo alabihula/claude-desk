@@ -10,7 +10,7 @@ import { matchingSkills, selectedSkillInput, slashSkillQuery } from '../../servi
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ContextMeter from './ContextMeter.vue'
-import CodeSnippetDrafts from './CodeSnippetDrafts.vue'
+import CodeSnippetCapsule from '../common/CodeSnippetCapsule.vue'
 import QueuedMessages from './QueuedMessages.vue'
 import SlashSkillMenu from './SlashSkillMenu.vue'
 import { useI18n } from '../../services/i18n'
@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
           <button :title="t('composer.removeAttachment')" @click="attachments.splice(index, 1)"><X :size="13" /></button>
         </div>
       </div>
-      <CodeSnippetDrafts :snippets="snippets" @clear="store.clearSnippetDrafts(activeConversationId)" />
+      <CodeSnippetCapsule :snippets="snippets" removable @clear="store.clearSnippetDrafts(activeConversationId)" />
       <SlashSkillMenu :skills="skillMenuOpen ? visibleSkills : []" :active-index="skillIndex" @select="chooseSkill" />
       <textarea
         ref="input"

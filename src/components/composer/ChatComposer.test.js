@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 vi.mock('@tauri-apps/api/core', () => ({ convertFileSrc: (path) => `asset:${path}` }))
+vi.mock('../../services/attachments', async (importOriginal) => ({
+  ...await importOriginal(),
+  clipboardImageFromEvent: vi.fn(),
+}))
 vi.mock('../../services/desktop', () => ({
   desktop: {
     copyAttachment: vi.fn(),
@@ -14,6 +18,7 @@ vi.mock('../../services/desktop', () => ({
 }))
 
 import { desktop } from '../../services/desktop'
+import { clipboardImageFromEvent } from '../../services/attachments'
 import { useWorkspaceStore } from '../../stores/workspace'
 import ChatComposer from './ChatComposer.vue'
 
@@ -24,6 +29,12 @@ async function flushPromises() {
   await Promise.resolve()
   await Promise.resolve()
   await nextTick()
+}
+
+function imagePasteEvent() {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', { value: { items: [{ type: 'image/png' }] } })
+  return event
 }
 
 beforeEach(() => {
@@ -48,6 +59,160 @@ afterEach(() => {
 })
 
 describe('ChatComposer attachments', () => {
+  it('shows a pasted image immediately and removes it from an empty draft', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    clipboardImageFromEvent.mockResolvedValue({ bytes: [1, 2, 3], extension: 'png' })
+    desktop.saveClipboardImage.mockResolvedValue({
+      id: 'image-1',
+      conversationId: 'conversation-1',
+      kind: 'image',
+      name: 'screenshot.png',
+      path: '/tmp/screenshot.png',
+    })
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+
+    const paste = imagePasteEvent()
+    root.querySelector('textarea').dispatchEvent(paste)
+    expect(paste.defaultPrevented).toBe(true)
+    await flushPromises()
+
+    expect(desktop.saveClipboardImage).toHaveBeenCalledWith('conversation-1', [1, 2, 3], 'png')
+    expect(root.querySelector('.attachment-card')?.textContent).toContain('screenshot.png')
+
+    root.querySelector('.attachment-preview').click()
+    expect(store.previewAttachment).toEqual(expect.objectContaining({ id: 'image-1', path: '/tmp/screenshot.png' }))
+
+    root.querySelector('.attachment-remove').click()
+    await nextTick()
+    expect(root.querySelector('.attachment-card')).toBeNull()
+  })
+
+  it('clears a pasted image immediately after sending while the request is still running', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    let finishSend
+    store.sendMessage = vi.fn(() => new Promise((resolve) => { finishSend = resolve }))
+    const attachment = {
+      id: 'image-1',
+      conversationId: 'conversation-1',
+      kind: 'image',
+      name: 'screenshot.png',
+      path: '/tmp/screenshot.png',
+    }
+    clipboardImageFromEvent.mockResolvedValue({ bytes: [1, 2, 3], extension: 'png' })
+    desktop.saveClipboardImage.mockResolvedValue(attachment)
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+
+    const textarea = root.querySelector('textarea')
+    textarea.dispatchEvent(imagePasteEvent())
+    await flushPromises()
+    textarea.value = '这个图片是什么内容？'
+    textarea.dispatchEvent(new Event('input'))
+    await nextTick()
+    root.querySelector('.send-button:last-child').click()
+    await nextTick()
+
+    expect(store.sendMessage).toHaveBeenCalledWith('这个图片是什么内容？', [attachment], null, [])
+    expect(root.querySelector('.attachment-card')).toBeNull()
+    finishSend()
+    await flushPromises()
+  })
+
+  it('keeps an asynchronously saved clipboard image with the conversation where paste started', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [
+      { id: 'conversation-1', projectId: 'project-1' },
+      { id: 'conversation-2', projectId: 'project-1' },
+    ]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    clipboardImageFromEvent.mockResolvedValue({ bytes: [1, 2, 3], extension: 'png' })
+    let finishSave
+    desktop.saveClipboardImage.mockImplementation(() => new Promise((resolve) => { finishSave = resolve }))
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+
+    root.querySelector('textarea').dispatchEvent(imagePasteEvent())
+    await Promise.resolve()
+    store.activeConversationId = 'conversation-2'
+    await nextTick()
+    finishSave({
+      id: 'image-1',
+      conversationId: 'conversation-1',
+      kind: 'image',
+      name: 'screenshot.png',
+      path: '/tmp/screenshot.png',
+    })
+    await flushPromises()
+
+    expect(root.querySelector('.attachment-card')).toBeNull()
+    store.activeConversationId = 'conversation-1'
+    await nextTick()
+    expect(root.querySelector('.attachment-card')?.textContent).toContain('screenshot.png')
+  })
+
+  it('keeps an attachment when the composer remounts after adding a file snippet', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    clipboardImageFromEvent.mockResolvedValue({ bytes: [1, 2, 3], extension: 'png' })
+    desktop.saveClipboardImage.mockResolvedValue({
+      id: 'image-1',
+      conversationId: 'conversation-1',
+      kind: 'image',
+      name: 'screenshot.png',
+      path: '/tmp/screenshot.png',
+    })
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    root.querySelector('textarea').dispatchEvent(imagePasteEvent())
+    await flushPromises()
+    expect(root.querySelector('.attachment-card')?.textContent).toContain('screenshot.png')
+
+    app.unmount()
+    app = null
+    root.innerHTML = ''
+    store.addSnippetDraft('conversation-1', {
+      path: 'src/main.js', startLine: 3, endLine: 4, content: 'const answer = 42',
+    })
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    expect(root.querySelector('.attachment-card')?.textContent).toContain('screenshot.png')
+    expect(root.querySelector('.snippet-capsule')?.textContent).toContain('1 selected text fragment')
+    expect(root.querySelector('.composer-draft-items')?.children).toHaveLength(2)
+  })
+
   it('adds dropped files to the target conversation and keeps drafts isolated', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -73,6 +238,7 @@ describe('ChatComposer attachments', () => {
     expect(desktop.copyAttachment).toHaveBeenCalledWith('conversation-1', '/tmp/Product-AI-use-case.md')
     expect(root.querySelector('.attachment-card')?.textContent).toContain('Product-AI-use-case.md')
     expect(root.querySelector('.attachment-card')?.textContent).toContain('MD')
+    expect(root.querySelector('.attachment-card')?.title).toBe('/tmp/Product-AI-use-case.md')
 
     store.activeConversationId = 'conversation-2'
     await nextTick()
@@ -82,7 +248,7 @@ describe('ChatComposer attachments', () => {
     await nextTick()
     expect(root.querySelector('.attachment-card')?.textContent).toContain('Product-AI-use-case.md')
 
-    root.querySelector('.attachment-card button').click()
+    root.querySelector('.attachment-remove').click()
     await nextTick()
     expect(root.querySelector('.attachment-card')).toBeNull()
   })

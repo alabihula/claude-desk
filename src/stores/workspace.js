@@ -100,6 +100,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     runs: {},
     queuedMessages: {},
     drafts: {},
+    attachmentDrafts: {},
     snippetDrafts: {},
     changes: {},
     gitEnvironments: {},
@@ -282,6 +283,25 @@ export const useWorkspaceStore = defineStore('workspace', {
       else delete this.drafts[conversationId]
     },
 
+    appendAttachmentDrafts(conversationId, attachments) {
+      if (!conversationId || !attachments?.length) return
+      this.attachmentDrafts[conversationId] = [
+        ...(this.attachmentDrafts[conversationId] || []),
+        ...attachments,
+      ]
+    },
+
+    removeAttachmentDraft(conversationId, attachmentId) {
+      if (!conversationId || !attachmentId) return
+      const remaining = (this.attachmentDrafts[conversationId] || []).filter((item) => item.id !== attachmentId)
+      if (remaining.length) this.attachmentDrafts[conversationId] = remaining
+      else delete this.attachmentDrafts[conversationId]
+    },
+
+    clearAttachmentDrafts(conversationId) {
+      if (conversationId) delete this.attachmentDrafts[conversationId]
+    },
+
     addSnippetDraft(conversationId, snippet) {
       if (!conversationId || !snippet?.content || !snippet.path) return
       const current = this.snippetDrafts[conversationId] || []
@@ -338,6 +358,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       delete this.messages[conversation.id]
       delete this.queuedMessages[conversation.id]
       delete this.drafts[conversation.id]
+      delete this.attachmentDrafts[conversation.id]
       delete this.snippetDrafts[conversation.id]
       if (this.activeConversationId === conversation.id) {
         this.activeConversationId = null

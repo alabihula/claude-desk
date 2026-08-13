@@ -18,20 +18,12 @@ import { useI18n } from '../../services/i18n'
 const store = useWorkspaceStore()
 const { t } = useI18n()
 const text = ref('')
-const attachmentDrafts = ref({})
 const skillDrafts = ref({})
 const input = ref(null)
 const adding = ref(false)
 const composition = { composing: false, compositionEndedAt: -Infinity }
 const activeConversationId = computed(() => store.activeConversationId)
-const attachments = computed({
-  get: () => attachmentDrafts.value[activeConversationId.value] || [],
-  set: (value) => {
-    if (!activeConversationId.value) return
-    if (value.length) attachmentDrafts.value[activeConversationId.value] = value
-    else delete attachmentDrafts.value[activeConversationId.value]
-  },
-})
+const attachments = computed(() => store.attachmentDrafts[activeConversationId.value] || [])
 const snippets = computed(() => store.snippetDrafts[activeConversationId.value] || [])
 const skills = ref([])
 const selectedSkill = computed({
@@ -53,12 +45,7 @@ async function addPaths(paths, conversationId = store.activeConversationId) {
   adding.value = true
   try {
     const result = await copyAttachmentPaths(paths, conversationId, desktop.copyAttachment)
-    if (result.attachments.length) {
-      attachmentDrafts.value[conversationId] = [
-        ...(attachmentDrafts.value[conversationId] || []),
-        ...result.attachments,
-      ]
-    }
+    store.appendAttachmentDrafts(conversationId, result.attachments)
     if (result.errors.length) store.error = result.errors.map(({ path, error }) => `${path}: ${error}`).join('\n')
   } catch (error) { store.error = String(error) }
   finally { adding.value = false }
@@ -70,23 +57,34 @@ async function chooseFiles() {
 }
 
 async function onPaste(event) {
-  const image = await clipboardImageFromEvent(event)
-  if (!image || !store.activeConversationId) return
+  const hasImage = [...(event.clipboardData?.items || [])].some((item) => item.type.startsWith('image/'))
+  const conversationId = store.activeConversationId
+  if (!hasImage || !conversationId) return
+  // Clipboard data is only synchronously cancelable; waiting for arrayBuffer would also paste the file name.
   event.preventDefault()
-  try { attachments.value.push(await desktop.saveClipboardImage(store.activeConversationId, image.bytes, image.extension)) }
+  const image = await clipboardImageFromEvent(event)
+  if (!image) return
+  try {
+    const attachment = await desktop.saveClipboardImage(conversationId, image.bytes, image.extension)
+    store.appendAttachmentDrafts(conversationId, [attachment])
+  }
   catch (error) { store.error = String(error) }
+}
+
+function removeAttachment(attachmentId) {
+  store.removeAttachmentDraft(activeConversationId.value, attachmentId)
 }
 
 async function send() {
   if (!text.value.trim() && !attachments.value.length && !snippets.value.length) return
   const conversationId = store.activeConversationId
-  const outgoing = attachments.value
+  const outgoing = [...attachments.value]
   const outgoingSnippets = snippets.value
   const content = text.value
   const skill = selectedSkill.value
   text.value = ''
   selectedSkill.value = null
-  attachments.value = []
+  store.clearAttachmentDrafts(conversationId)
   store.clearSnippetDrafts(conversationId)
   store.setDraft(conversationId, '')
   await store.sendMessage(content, outgoing, skill, outgoingSnippets)
@@ -198,17 +196,27 @@ onBeforeUnmount(() => {
         @activate="activateQueued"
         @remove="removeQueued"
       />
-      <div v-if="attachments.length" class="attachment-strip">
-        <div v-for="(attachment, index) in attachments" :key="attachment.id" class="attachment-card" :title="attachment.name">
-          <div class="attachment-thumb">
-            <img v-if="attachment.kind === 'image'" :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
-            <File v-else :size="23" />
-          </div>
+      <div v-if="attachments.length || snippets.length" class="composer-draft-items">
+        <div
+          v-for="attachment in attachments"
+          :key="attachment.id"
+          class="attachment-card"
+          :title="attachment.sourcePath || attachment.path || attachment.name"
+        >
+          <button
+            v-if="attachment.kind === 'image'"
+            class="attachment-thumb attachment-preview"
+            :aria-label="t('message.preview', { name: attachment.name })"
+            @click="store.previewAttachment = attachment"
+          >
+            <img :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
+          </button>
+          <div v-else class="attachment-thumb"><File :size="23" /></div>
           <span><strong>{{ attachment.name }}</strong><small>{{ attachmentTypeLabel(attachment) }}</small></span>
-          <button :title="t('composer.removeAttachment')" @click="attachments.splice(index, 1)"><X :size="13" /></button>
+          <button class="attachment-remove" :title="t('composer.removeAttachment')" @click="removeAttachment(attachment.id)"><X :size="13" /></button>
         </div>
+        <CodeSnippetCapsule :snippets="snippets" removable @clear="store.clearSnippetDrafts(activeConversationId)" />
       </div>
-      <CodeSnippetCapsule :snippets="snippets" removable @clear="store.clearSnippetDrafts(activeConversationId)" />
       <SlashSkillMenu :skills="skillMenuOpen ? visibleSkills : []" :active-index="skillIndex" @select="chooseSkill" />
       <textarea
         ref="input"

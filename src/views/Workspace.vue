@@ -50,10 +50,10 @@ onBeforeUnmount(() => unlistenResize?.())
         </div>
       </div>
       <div class="header-actions">
-        <button class="text-button" :class="{ active: store.workspaceView === 'files' }" :title="t('workspace.filesShortcut')" @click="store.workspaceView = 'files'"><Files :size="15" /> {{ t('workspace.files') }}</button>
+        <button class="header-action" :class="{ active: store.workspaceView === 'files' }" :title="t('workspace.filesShortcut')" @click="store.workspaceView = 'files'"><Files :size="16" /> {{ t('workspace.files') }}</button>
         <ChangesButton />
-        <button class="text-button" @click="store.newConversation()"><Plus :size="15" /> {{ t('workspace.newChat') }}</button>
-        <button class="icon-button" :title="t('workspace.openTerminal')" @click="desktop.openTerminal(store.activeProject.path)"><Terminal :size="17" /></button>
+        <button class="header-action" @click="store.newConversation()"><Plus :size="16" /> {{ t('workspace.newChat') }}</button>
+        <button class="header-action header-action-icon" :title="t('workspace.openTerminal')" @click="desktop.openTerminal(store.activeProject.path)"><Terminal :size="16" /></button>
       </div>
     </header>
 

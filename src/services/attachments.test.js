@@ -24,8 +24,8 @@ describe('attachment intake', () => {
 
     await expect(copyAttachmentPaths(['/tmp/a.md', '/tmp/a.md', '/tmp/b.png'], 'conversation-1', copy)).resolves.toEqual({
       attachments: [
-        { id: '/tmp/a.md', conversationId: 'conversation-1', path: '/tmp/a.md' },
-        { id: '/tmp/b.png', conversationId: 'conversation-1', path: '/tmp/b.png' },
+        { id: '/tmp/a.md', conversationId: 'conversation-1', path: '/tmp/a.md', sourcePath: '/tmp/a.md' },
+        { id: '/tmp/b.png', conversationId: 'conversation-1', path: '/tmp/b.png', sourcePath: '/tmp/b.png' },
       ],
       errors: [],
     })
@@ -39,7 +39,7 @@ describe('attachment intake', () => {
 
     const result = await copyAttachmentPaths(['/tmp/folder', '/tmp/notes.md'], 'conversation-1', copy)
 
-    expect(result.attachments).toEqual([{ id: '/tmp/notes.md', path: '/tmp/notes.md' }])
+    expect(result.attachments).toEqual([{ id: '/tmp/notes.md', path: '/tmp/notes.md', sourcePath: '/tmp/notes.md' }])
     expect(result.errors).toEqual([{ path: '/tmp/folder', error: 'Error: Attachment is not a readable file' }])
   })
 

@@ -15,7 +15,11 @@ export async function copyAttachmentPaths(paths, conversationId, copyAttachment)
   const attachments = []
   const errors = []
   for (const path of uniquePaths) {
-    try { attachments.push(await copyAttachment(conversationId, path)) }
+    try {
+      const attachment = await copyAttachment(conversationId, path)
+      // Keep the original location for the draft tooltip; Claude still reads the app-owned copy.
+      attachments.push({ ...attachment, sourcePath: path })
+    }
     catch (error) { errors.push({ path, error: String(error) }) }
   }
   return { attachments, errors }

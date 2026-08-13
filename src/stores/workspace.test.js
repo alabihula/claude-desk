@@ -208,6 +208,22 @@ describe('workspace supplemental messages', () => {
     expect(store.drafts).toEqual({ 'conversation-2': '另一段草稿' })
   })
 
+  it('keeps attachment drafts scoped to their conversation until removed or cleared', () => {
+    const store = setupStore()
+    const first = { id: 'attachment-1', name: 'first.png' }
+    const second = { id: 'attachment-2', name: 'second.md' }
+
+    store.appendAttachmentDrafts('conversation-1', [first, second])
+    store.appendAttachmentDrafts('conversation-2', [second])
+    store.removeAttachmentDraft('conversation-1', first.id)
+
+    expect(store.attachmentDrafts['conversation-1']).toEqual([second])
+    expect(store.attachmentDrafts['conversation-2']).toEqual([second])
+
+    store.clearAttachmentDrafts('conversation-1')
+    expect(store.attachmentDrafts['conversation-1']).toBeUndefined()
+  })
+
   it('deduplicates selected file fragments within each conversation draft', () => {
     const store = setupStore()
     const snippet = { path: 'src/main.js', startLine: 2, endLine: 3, content: 'one\ntwo' }

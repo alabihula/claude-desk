@@ -37,10 +37,10 @@ onBeforeUnmount(() => {
 <template>
   <button
     v-if="store.activeProject"
-    class="changes-button"
+    class="header-action changes-button"
     :title="t('environment.title')"
     @click="openEnvironment"
   >
-    <FileDiff :size="15" /><span>{{ t('changes.label') }}</span><em v-if="store.activeChanges.length">{{ store.activeChanges.length }}</em>
+    <FileDiff :size="16" /><span>{{ t('changes.label') }}</span><em v-if="store.activeChanges.length">{{ store.activeChanges.length }}</em>
   </button>
 </template>

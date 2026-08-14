@@ -17,6 +17,13 @@ function modelFromArgs(args = []) {
   return index >= 0 ? args[index + 1] || '' : ''
 }
 
+export function configuredModel(settings, legacy = {}) {
+  const config = object(settings)
+  const env = object(config.env)
+  const legacyEnv = object(legacy.env)
+  return config.model || env.ANTHROPIC_MODEL || legacyEnv.ANTHROPIC_MODEL || modelFromArgs(legacy.args) || ''
+}
+
 export function visualFromClaudeSettings(settings, legacy = {}) {
   const config = object(settings)
   const env = object(config.env)
@@ -31,7 +38,7 @@ export function visualFromClaudeSettings(settings, legacy = {}) {
       || legacyEnv.ANTHROPIC_AUTH_TOKEN
       || legacyEnv.ANTHROPIC_API_KEY
       || '',
-    model: config.model || env.ANTHROPIC_MODEL || legacyEnv.ANTHROPIC_MODEL || modelFromArgs(legacy.args),
+    model: configuredModel(config, legacy),
     autoCompact: (env.DISABLE_AUTO_COMPACT || legacyEnv.DISABLE_AUTO_COMPACT) !== '1',
     compactThreshold: env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || legacyEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || 'default',
     contextWindow: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || legacyEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '',

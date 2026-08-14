@@ -1,4 +1,4 @@
-use crate::context;
+use crate::{context, runtime};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ pub struct Conversation {
     pub project_id: String,
     pub title: String,
     pub claude_session_id: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_opened_at: String,
@@ -125,6 +127,8 @@ fn migrate_connection(connection: &Connection) -> Result<(), String> {
               project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
               title TEXT NOT NULL,
               claude_session_id TEXT NOT NULL,
+              model TEXT,
+              effort TEXT,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
               last_opened_at TEXT NOT NULL,
@@ -194,6 +198,16 @@ fn migrate_connection(connection: &Connection) -> Result<(), String> {
                 "ALTER TABLE conversations ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
                 [],
             )
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(connection, "conversations", "model")? {
+        connection
+            .execute("ALTER TABLE conversations ADD COLUMN model TEXT", [])
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(connection, "conversations", "effort")? {
+        connection
+            .execute("ALTER TABLE conversations ADD COLUMN effort TEXT", [])
             .map_err(|error| error.to_string())?;
     }
 
@@ -325,7 +339,7 @@ pub fn reorder_projects(app: AppHandle, ids: Vec<String>) -> Result<(), String> 
 pub fn list_conversations(app: AppHandle, project_id: String) -> Result<Vec<Conversation>, String> {
     let connection = connect(&app)?;
     let mut statement = connection.prepare(
-        "SELECT id, project_id, title, claude_session_id, created_at, updated_at, last_opened_at FROM conversations WHERE project_id = ?1 ORDER BY sort_order ASC, last_opened_at DESC"
+        "SELECT id, project_id, title, claude_session_id, model, effort, created_at, updated_at, last_opened_at FROM conversations WHERE project_id = ?1 ORDER BY sort_order ASC, last_opened_at DESC"
     ).map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([project_id], |row| {
@@ -334,9 +348,11 @@ pub fn list_conversations(app: AppHandle, project_id: String) -> Result<Vec<Conv
                 project_id: row.get(1)?,
                 title: row.get(2)?,
                 claude_session_id: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                last_opened_at: row.get(6)?,
+                model: row.get(4)?,
+                effort: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                last_opened_at: row.get(8)?,
             })
         })
         .map_err(|error| error.to_string())?;
@@ -352,6 +368,8 @@ pub fn create_conversation(app: AppHandle, project_id: String) -> Result<Convers
         project_id,
         title: "New Conversation".into(),
         claude_session_id: Uuid::new_v4().to_string(),
+        model: None,
+        effort: None,
         created_at: timestamp.clone(),
         updated_at: timestamp.clone(),
         last_opened_at: timestamp,
@@ -383,6 +401,27 @@ pub fn rename_conversation(app: AppHandle, id: String, title: String) -> Result<
             params![title, now(), id],
         )
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_conversation_runtime(
+    app: AppHandle,
+    id: String,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
+    let model = runtime::normalize_model(model.as_deref())?;
+    let effort = runtime::normalize_effort(effort.as_deref())?;
+    let changed = connect(&app)?
+        .execute(
+            "UPDATE conversations SET model = ?1, effort = ?2, updated_at = ?3 WHERE id = ?4",
+            params![model, effort, now(), id],
+        )
+        .map_err(|error| error.to_string())?;
+    if changed == 0 {
+        return Err("Conversation was not found".into());
+    }
     Ok(())
 }
 
@@ -622,6 +661,40 @@ mod message_tests {
             )
             .unwrap();
         assert!(parse_snippets(&value).is_empty());
+    }
+
+    #[test]
+    fn migrates_conversations_with_default_runtime_settings() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE conversations (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  claude_session_id TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  last_opened_at TEXT NOT NULL
+                );
+                INSERT INTO conversations VALUES (
+                  'conversation-1', 'project-1', 'Old', 'session-1', 'now', 'now', 'now'
+                );",
+            )
+            .unwrap();
+
+        migrate_connection(&connection).unwrap();
+
+        assert!(has_column(&connection, "conversations", "model").unwrap());
+        assert!(has_column(&connection, "conversations", "effort").unwrap());
+        let values: (Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT model, effort FROM conversations WHERE id = 'conversation-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(values, (None, None));
     }
 
     #[test]

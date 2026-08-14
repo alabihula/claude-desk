@@ -24,6 +24,7 @@ vi.mock('../services/desktop', () => ({
     gitEnvironment: vi.fn(),
     gitCommit: vi.fn(),
     renameConversation: vi.fn(),
+    updateConversationRuntime: vi.fn(),
     readProjectFile: vi.fn(),
     openInEditor: vi.fn(),
   },
@@ -101,6 +102,21 @@ describe('workspace supplemental messages', () => {
     expect(store.activeQueuedMessages[0]).toMatchObject({ content: '补充：使用深色主题', status: 'queued' })
     expect(desktop.saveMessage).not.toHaveBeenCalled()
     expect(desktop.sendClaude).not.toHaveBeenCalled()
+  })
+
+  it('persists conversation runtime choices and sends a queued message with its snapshot', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    await store.updateConversationRuntime('conversation-1', { model: 'sonnet[1m]', effort: 'high' })
+    await store.sendMessage('使用扩展上下文')
+    await store.updateConversationRuntime('conversation-1', { model: 'opus', effort: 'max' })
+
+    expect(desktop.updateConversationRuntime).toHaveBeenNthCalledWith(1, 'conversation-1', 'sonnet[1m]', 'high')
+    expect(store.activeQueuedMessages[0]).toMatchObject({ model: 'sonnet[1m]', effort: 'high' })
+
+    delete store.runs['conversation-1']
+    await store.dispatchNextQueued('conversation-1')
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet[1m]', effort: 'high' }))
   })
 
   it('prioritizes the selected supplement and interrupts the current run', async () => {

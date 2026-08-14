@@ -87,7 +87,7 @@ async function save() {
 </script>
 
 <template>
-  <div v-if="store.settingsOpen" class="modal-backdrop" @click.self="store.settingsOpen = false">
+  <div v-if="store.settingsOpen" class="modal-backdrop">
     <section class="settings-modal settings-modal-wide">
       <header><div><span class="eyebrow">Claude Desk</span><h2>{{ t('settings.title') }}</h2></div><button class="icon-button" :title="t('common.close')" @click="store.settingsOpen = false"><X :size="18" /></button></header>
       <div class="settings-tabs">

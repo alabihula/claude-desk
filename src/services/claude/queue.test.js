@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from './queue'
 
-const conversation = { id: 'conversation-1', claudeSessionId: 'session-1' }
+const conversation = { id: 'conversation-1', claudeSessionId: 'session-1', model: 'sonnet[1m]', effort: 'high' }
 const project = { id: 'project-1', path: '/tmp/project' }
 
 function queued(id, content = id) {
@@ -17,8 +17,19 @@ describe('Claude supplemental message queue', () => {
       projectId: 'project-1',
       projectPath: '/tmp/project',
       content: '补充内容',
+      model: 'sonnet[1m]',
+      effort: 'high',
       status: 'queued',
     })
+  })
+
+  it('snapshots runtime choices when the message enters the queue', () => {
+    const result = queued('runtime')
+    conversation.model = 'opus'
+    conversation.effort = 'max'
+    expect(result).toMatchObject({ model: 'sonnet[1m]', effort: 'high' })
+    conversation.model = 'sonnet[1m]'
+    conversation.effort = 'high'
   })
 
   it('keeps an external skill binding with a queued message', () => {

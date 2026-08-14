@@ -1,4 +1,4 @@
-use crate::{context, data, platform, skills};
+use crate::{context, data, platform, runtime, skills};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,6 +41,8 @@ pub struct ClaudeRequest {
     pub env: Option<HashMap<String, String>>,
     pub permission_mode: Option<String>,
     pub skill_path: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -230,11 +232,18 @@ pub async fn send_claude(
         return Err("Unsupported Claude permission mode".into());
     }
 
+    let model = runtime::normalize_model(request.model.as_deref())?;
+    let effort = runtime::normalize_effort(request.effort.as_deref())?;
+    let runtime_args = runtime::with_runtime_overrides(
+        request.args.clone().unwrap_or_default(),
+        model.as_deref(),
+        effort.as_deref(),
+    );
     let mut command = resolved.command();
     command
         .current_dir(&request.project_path)
         .envs(&environment)
-        .args(request.args.clone().unwrap_or_default())
+        .args(runtime_args)
         .args([
             "--print",
             "--input-format",

@@ -9,6 +9,8 @@ import { resizeComposerTextarea } from '../../services/composerTextarea'
 import { matchingSkills, selectedSkillInput, slashSkillQuery } from '../../services/skills'
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { configuredModel } from '../../services/claude/settings'
+import ComposerRuntimeControls from './ComposerRuntimeControls.vue'
 import ContextMeter from './ContextMeter.vue'
 import CodeSnippetCapsule from '../common/CodeSnippetCapsule.vue'
 import QueuedMessages from './QueuedMessages.vue'
@@ -21,8 +23,11 @@ const text = ref('')
 const skillDrafts = ref({})
 const input = ref(null)
 const adding = ref(false)
+const runtimeSaving = ref(false)
 const composition = { composing: false, compositionEndedAt: -Infinity }
 const activeConversationId = computed(() => store.activeConversationId)
+const activeConversation = computed(() => store.activeConversation)
+const defaultModel = computed(() => configuredModel(store.claudeSettings, store.settings))
 const attachments = computed(() => store.attachmentDrafts[activeConversationId.value] || [])
 const snippets = computed(() => store.snippetDrafts[activeConversationId.value] || [])
 const skills = ref([])
@@ -54,6 +59,20 @@ async function addPaths(paths, conversationId = store.activeConversationId) {
 async function chooseFiles() {
   const paths = await open({ multiple: true, directory: false, title: t('composer.attachDialog') })
   if (paths) await addPaths(Array.isArray(paths) ? paths : [paths])
+}
+
+async function changeRuntime(patch) {
+  const conversation = activeConversation.value
+  if (!conversation || runtimeSaving.value) return
+  runtimeSaving.value = true
+  try {
+    await store.updateConversationRuntime(conversation.id, {
+      model: conversation.model || null,
+      effort: conversation.effort || null,
+      ...patch,
+    })
+  } catch (error) { store.error = String(error) }
+  finally { runtimeSaving.value = false }
 }
 
 async function onPaste(event) {
@@ -233,6 +252,14 @@ onBeforeUnmount(() => {
           <Paperclip :size="17" /> <span>{{ t(adding ? 'composer.adding' : 'composer.attach') }}</span>
         </button>
         <ContextMeter />
+        <ComposerRuntimeControls
+          v-if="activeConversation"
+          :model="activeConversation.model || ''"
+          :effort="activeConversation.effort || ''"
+          :default-model="defaultModel"
+          :saving="runtimeSaving"
+          @change="changeRuntime"
+        />
         <span class="composer-hint">{{ t(store.activeRun ? 'composer.queueHint' : 'composer.sendHint') }} · {{ t('composer.newlineHint') }}</span>
         <button v-if="store.activeRun" class="send-button stop-button" :title="t('composer.stop')" @click="store.stopClaude()"><Square :size="13" fill="currentColor" /></button>
         <button class="send-button" :disabled="!text.trim() && !attachments.length && !snippets.length" :title="t(store.activeRun ? 'composer.queue' : 'composer.send')" @click="send"><ArrowUp :size="18" /></button>

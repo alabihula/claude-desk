@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyVisualClaudeSettings, removeMigratedLegacySettings, visualFromClaudeSettings } from './settings'
+import { applyVisualClaudeSettings, configuredModel, removeMigratedLegacySettings, visualFromClaudeSettings } from './settings'
 
 describe('Claude settings mapping', () => {
   it('maps a custom gateway without dropping unrelated settings', () => {
@@ -31,5 +31,10 @@ describe('Claude settings mapping', () => {
     const legacy = { args: ['--verbose', '--model', 'sonnet'], env: { ANTHROPIC_BASE_URL: 'https://old', KEEP_ME: 'yes' } }
     expect(visualFromClaudeSettings({}, legacy)).toMatchObject({ baseUrl: 'https://old', model: 'sonnet' })
     expect(removeMigratedLegacySettings(legacy)).toEqual({ args: ['--verbose'], env: { KEEP_ME: 'yes' } })
+  })
+
+  it('resolves the configured default model without changing custom gateway ids', () => {
+    expect(configuredModel({ env: { ANTHROPIC_MODEL: 'kimi-latest' } })).toBe('kimi-latest')
+    expect(configuredModel({ model: 'sonnet' }, { env: { ANTHROPIC_MODEL: 'legacy' } })).toBe('sonnet')
   })
 })

@@ -1,6 +1,6 @@
 [package]
 name = "claude-desk"
-version = "0.1.31"
+version = "0.1.33"
 description = "A focused desktop client for Claude Code"
 authors = ["Claude Desk"]
 edition = "2021"

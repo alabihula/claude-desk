@@ -255,6 +255,25 @@ button.workspace-tab { padding: 0 10px; gap: 6px; }.workspace-tab:hover { backgr
 .context-meter summary { height: 30px; padding: 0 8px; display: flex; align-items: center; gap: 5px; border-radius: 7px; color: var(--text-faint); font-size: 10px; cursor: pointer; list-style: none; user-select: none; }.context-meter summary::-webkit-details-marker { display: none; }.context-meter summary:hover, .context-meter[open] summary { background: var(--surface-hover); color: var(--text-muted); }.context-meter summary.warning { color: var(--accent); }.context-meter summary.disabled { color: var(--danger); }
 .context-popover { position: absolute; z-index: 35; bottom: 38px; left: 0; width: 275px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }.context-popover header { display: flex; align-items: center; justify-content: space-between; }.context-popover header strong { font-size: 12px; }.context-popover header small { color: var(--text-faint); font-size: 9px; }.context-popover p { margin: 8px 0 11px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }.context-popover button { width: 100%; height: 32px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 7px; background: var(--surface-hover); color: var(--text-muted); font-size: 11px; }.context-popover button:hover:not(:disabled) { color: var(--text); background: var(--accent-soft); }
 .context-progress { height: 5px; margin-top: 12px; overflow: hidden; border-radius: 5px; background: var(--surface-hover); }.context-progress i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.runtime-controls { display: flex; align-items: center; gap: 2px; }
+.runtime-control { position: relative; }
+.runtime-control summary { max-width: 138px; height: 30px; padding: 0 7px; display: flex; align-items: center; gap: 5px; border-radius: 7px; color: var(--text-faint); font-size: 10px; cursor: pointer; list-style: none; user-select: none; }
+.runtime-control summary::-webkit-details-marker { display: none; }
+.runtime-control summary span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.runtime-control summary svg { flex: 0 0 auto; }
+.runtime-control summary:hover, .runtime-control[open] summary { background: var(--surface-hover); color: var(--text-muted); }
+.runtime-popover { position: absolute; z-index: 35; bottom: 38px; left: 0; width: 260px; max-height: min(520px, calc(100vh - 110px)); padding: 7px; display: grid; gap: 3px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+.runtime-popover > strong { padding: 5px 6px 7px; font-size: 11px; }
+.runtime-popover > button { min-height: 36px; padding: 6px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 7px; background: transparent; color: var(--text-muted); text-align: left; }
+.runtime-popover > button:hover, .runtime-popover > button.active { background: var(--surface-hover); color: var(--text); }
+.runtime-popover > button span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.runtime-popover > button small { flex: 0 0 auto; color: var(--text-faint); font-size: 9px; }
+.runtime-popover > p { margin: 5px 6px 2px; color: var(--text-faint); font-size: 9px; line-height: 1.45; }
+.effort-popover { left: auto; right: 0; }
+.runtime-custom-model { margin-top: 3px; padding-top: 7px; display: flex; gap: 5px; border-top: 1px solid var(--border-soft); }
+.runtime-custom-model input { min-width: 0; height: 31px; flex: 1; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--app-bg); color: var(--text); font-size: 10px; outline: none; }
+.runtime-custom-model input:focus { border-color: var(--accent); }
+.runtime-custom-model button { height: 31px; padding: 0 9px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-strong); font-size: 10px; }
 .composer-hint { margin-left: auto; color: var(--text-faint); font-size: 10px; }
 .send-button { width: 31px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; background: var(--accent); color: white; }
 .send-button:hover { background: var(--accent-strong); }.stop-button { background: var(--text); color: var(--app-bg); }
@@ -355,6 +374,7 @@ button.workspace-tab { padding: 0 10px; gap: 6px; }.workspace-tab:hover { backgr
 
 @media (max-width: 1120px) { .message-layout { display: block; }.message-column { width: min(780px, calc(100% - 56px)); }.conversation-rail { display: none; } }
 @media (max-width: 1020px) { .sidebar { width: 226px; flex-basis: 226px; }.brand, .sidebar-scroll, .sidebar-footer { width: 226px; min-width: 226px; }.diff-drawer { width: calc(100% - 226px); }.composer-hint, .save-note { display: none; } }
+@media (max-width: 760px) { .runtime-control summary { max-width: 34px; }.runtime-control summary span, .runtime-control summary svg:last-child { display: none; } }
 @media (max-width: 900px) { .diff-split-row { min-width: 0; grid-template-columns: 1fr; }.diff-cell.old { border-right: 0; }.diff-cell.next { border-top: 1px solid rgb(255 255 255 / 7%); }.diff-split-row.change .diff-cell.empty { display: none; } }
 @media (max-width: 900px) { .file-workspace { grid-template-columns: minmax(0, 1fr) 240px; } }
 @media (max-width: 720px) { .connection-section, .two-column, .three-column { grid-template-columns: 1fr; }.connection-section > * { grid-column: 1 !important; }.context-popover { left: -70px; }.changes-button span { display: none; } }

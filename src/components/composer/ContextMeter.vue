@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Gauge, Minimize2 } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useI18n } from '../../services/i18n'
+import { useCloseOnOutsidePointerDown } from '../../services/clickOutside'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
@@ -24,14 +25,7 @@ function tokens(value) {
   return String(value)
 }
 
-function closeOnOutsidePointerDown(event) {
-  if (details.value?.hasAttribute('open') && !details.value.contains(event.target)) {
-    details.value.removeAttribute('open')
-  }
-}
-
-onMounted(() => document.addEventListener('pointerdown', closeOnOutsidePointerDown))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', closeOnOutsidePointerDown))
+useCloseOnOutsidePointerDown(details, () => details.value?.removeAttribute('open'))
 
 async function compact() {
   details.value?.removeAttribute('open')

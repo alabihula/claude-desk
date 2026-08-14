@@ -5,6 +5,8 @@ export function createQueuedMessage({ id, conversation, project, content, attach
     sessionId: conversation.claudeSessionId,
     projectId: project.id,
     projectPath: project.path,
+    model: conversation.model || null,
+    effort: conversation.effort || null,
     content: content.trim(),
     attachments: attachments.map((item) => ({ ...item })),
     snippets: snippets.map((item) => ({ ...item })),

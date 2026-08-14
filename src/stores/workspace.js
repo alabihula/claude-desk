@@ -347,6 +347,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
+    async updateConversationRuntime(conversationId, runtime) {
+      const conversation = this.conversationById(conversationId)
+      if (!conversation) return
+      const model = String(runtime.model || '').trim() || null
+      const effort = runtime.effort && runtime.effort !== 'auto' ? runtime.effort : null
+      await desktop.updateConversationRuntime(conversationId, model, effort)
+      for (const conversations of Object.values(this.conversationsByProject)) {
+        const match = conversations.find((item) => item.id === conversationId)
+        if (match) Object.assign(match, { model, effort })
+      }
+      const activeMatch = this.conversations.find((item) => item.id === conversationId)
+      if (activeMatch) Object.assign(activeMatch, { model, effort })
+    },
+
     async deleteConversation(conversation) {
       if (this.runs[conversation.id]) await this.stopClaude(conversation.id)
       await desktop.deleteConversation(conversation.id)
@@ -449,6 +463,8 @@ export const useWorkspaceStore = defineStore('workspace', {
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
           skillPath: queued.skill?.path || null,
+          model: queued.model,
+          effort: queued.effort,
         })
         if (this.runs[queued.conversationId]) this.runs[queued.conversationId].runId = runId
       } catch (error) {
@@ -717,6 +733,8 @@ export const useWorkspaceStore = defineStore('workspace', {
           args: this.settings.args,
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
+          model: conversation.model || null,
+          effort: conversation.effort || null,
         })
         if (this.runs[conversation.id]) this.runs[conversation.id].runId = runId
       } catch (error) {

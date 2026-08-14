@@ -9,6 +9,7 @@ export const desktop = {
   listConversations: (projectId) => invoke('list_conversations', { projectId }),
   createConversation: (projectId) => invoke('create_conversation', { projectId }),
   renameConversation: (id, title) => invoke('rename_conversation', { id, title }),
+  updateConversationRuntime: (id, model, effort) => invoke('update_conversation_runtime', { id, model, effort }),
   touchConversation: (id) => invoke('touch_conversation', { id }),
   deleteConversation: (id) => invoke('delete_conversation', { id }),
   reorderConversations: (projectId, ids) => invoke('reorder_conversations', { projectId, ids }),

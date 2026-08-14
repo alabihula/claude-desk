@@ -5,6 +5,7 @@ mod data;
 mod files;
 mod git;
 mod platform;
+mod runtime;
 mod skills;
 
 use claude::ClaudeProcesses;
@@ -39,6 +40,7 @@ pub fn run() {
             data::list_conversations,
             data::create_conversation,
             data::rename_conversation,
+            data::update_conversation_runtime,
             data::touch_conversation,
             data::delete_conversation,
             data::reorder_conversations,

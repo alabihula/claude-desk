@@ -9,7 +9,6 @@ import {
   Trash2,
 } from 'lucide-vue-next'
 import { confirm, open } from '@tauri-apps/plugin-dialog'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { desktop } from '../../services/desktop'
 import BrandMark from '../common/BrandMark.vue'
@@ -30,11 +29,6 @@ const collapsedStyle = {
   transform: 'translateX(-8px)',
   borderRightColor: 'transparent',
   pointerEvents: 'none',
-}
-
-function dragWindow(event) {
-  if (event.target.closest('button, a, input, select, textarea')) return
-  getCurrentWindow().startDragging().catch(() => {})
 }
 
 async function chooseProject() {
@@ -127,7 +121,7 @@ onBeforeUnmount(() => {
 
 <template>
   <aside class="sidebar" :style="store.sidebarCollapsed ? collapsedStyle : null">
-    <header class="brand" data-tauri-drag-region @mousedown.left="dragWindow">
+    <header class="brand" data-tauri-drag-region="deep">
       <div class="brand-title">
         <BrandMark :size="28" />
         <span>Claude Desk</span>

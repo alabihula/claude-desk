@@ -2,24 +2,30 @@ import { describe, expect, it } from 'vitest'
 import { extractLocalFileCandidates, extractProjectFileReferences, fileSelectionSnippet, fileSelectionsPrompt, formatFileSize, selectionLineRange } from './localFiles'
 
 describe('local file references', () => {
-  it('extracts generated files from inline code, links, and bare absolute paths', () => {
+  it('extracts only explicit local download links', () => {
     const content = [
       '已生成：`/Users/xing.min/Documents/羽毛球/政策头条 截图识别.md`。',
       '[下载表格](./exports/report.xlsx)',
+      '[Download archive](./exports/source.zip)',
+      '[查看报告](./exports/report.pdf)',
       '项目根目录还有 `README.md`。',
       '文件路径：/Users/xing.min/Documents/羽毛球/output/result.pdf，点击查看。',
     ].join('\n')
     expect(extractLocalFileCandidates(content)).toEqual([
-      '/Users/xing.min/Documents/羽毛球/政策头条 截图识别.md',
       './exports/report.xlsx',
-      'README.md',
-      '/Users/xing.min/Documents/羽毛球/output/result.pdf',
+      './exports/source.zip',
     ])
   })
 
-  it('ignores source references, shell snippets, remote URLs, and duplicates', () => {
-    const content = '`src/main.js` `npm run build` https://example.com/report.pdf `/tmp/report.md` `/tmp/report.md`'
-    expect(extractLocalFileCandidates(content)).toEqual(['/tmp/report.md'])
+  it('ignores read file references, remote links, and duplicate downloads', () => {
+    const content = [
+      '读过 `package.json` 和 `packages/web/cordis.patch.yml`。',
+      '绝对路径 `/Users/x/project/src/App.vue` 也只是引用。',
+      '[下载官网](https://example.com/report.pdf)',
+      '[下载报告](./exports/report.pdf)',
+      '[再次下载](./exports/report.pdf)',
+    ].join('\n')
+    expect(extractLocalFileCandidates(content)).toEqual(['./exports/report.pdf'])
   })
 
   it('formats compact file sizes', () => {

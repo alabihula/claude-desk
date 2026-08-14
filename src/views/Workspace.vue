@@ -16,11 +16,6 @@ const currentWindow = getCurrentWindow()
 const fullscreen = ref(false)
 let unlistenResize
 
-function dragWindow(event) {
-  if (event.target.closest('button, a, input, select, textarea')) return
-  currentWindow.startDragging().catch(() => {})
-}
-
 async function syncWindowMode() {
   fullscreen.value = await currentWindow.isFullscreen().catch(() => false)
 }
@@ -45,7 +40,7 @@ onBeforeUnmount(() => unlistenResize?.())
           <PanelLeftOpen v-if="store.sidebarCollapsed" :size="17" />
           <PanelLeftClose v-else :size="17" />
         </button>
-        <div class="workspace-title" data-tauri-drag-region @mousedown.left="dragWindow">
+        <div class="workspace-title" data-tauri-drag-region="deep">
           <span>{{ store.activeProject.name }}</span><i>/</i><strong>{{ store.activeConversation ? conversationTitle(store.activeConversation.title) : t('workspace.noConversation') }}</strong>
         </div>
       </div>

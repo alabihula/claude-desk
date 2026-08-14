@@ -1,6 +1,3 @@
-const EXPORT_EXTENSIONS = 'md|markdown|txt|pdf|doc|docx|xls|xlsx|csv|tsv|ppt|pptx|json|ya?ml|xml|html?|zip|tar|gz|tgz|7z|png|jpe?g|webp|gif|svg|mp3|wav|mp4|mov|sql|log'
-const ANY_FILE_EXTENSIONS = `${EXPORT_EXTENSIONS}|js|jsx|ts|tsx|vue|css|scss|less|py|rs|java|go|sh|bash`
-
 function decodePath(value) {
   try { return decodeURIComponent(value) } catch { return value }
 }
@@ -12,10 +9,8 @@ function cleanPath(value) {
 
 function isDownloadCandidate(value) {
   if (!value || /[\r\n]/.test(value)) return false
-  if (value.startsWith('/')) return new RegExp(`\.(${ANY_FILE_EXTENSIONS})$`, 'i').test(value)
-  return !/^(?:https?:)?\/\//i.test(value)
-    && !/[<>:"|?*]/.test(value)
-    && new RegExp(`\.(${EXPORT_EXTENSIONS})$`, 'i').test(value)
+  return !/^(?:(?:https?|mailto|javascript|data):|\/\/)/i.test(value)
+    && !value.startsWith('#')
 }
 
 export function extractLocalFileCandidates(content = '') {
@@ -25,11 +20,11 @@ export function extractLocalFileCandidates(content = '') {
     if (isDownloadCandidate(path)) matches.push({ path, index })
   }
 
-  for (const match of content.matchAll(/`([^`\n]+)`/g)) add(match[1], match.index)
-  for (const match of content.matchAll(/\[[^\]]*\]\((file:\/\/[^)\n]+|\/[^)\n]+|\.\.?\/[^)\n]+)\)/g)) add(match[1], match.index)
-
-  const absoluteFile = new RegExp(`((?:/Users|/Volumes|/private|/tmp)/[^\n\u0060]+?\.(${ANY_FILE_EXTENSIONS}))(?=$|[\\s，。；;,)）\\]】])`, 'gim')
-  for (const match of content.matchAll(absoluteFile)) add(match[1], match.index)
+  // A download card is an explicit product affordance, not a guess based on a
+  // path mentioned while Claude reads or edits the project.
+  for (const match of content.matchAll(/\[([^\]\n]+)\]\(([^)\n]+)\)/g)) {
+    if (/(?:下载|\bdownload\b)/i.test(match[1])) add(match[2], match.index)
+  }
 
   const candidates = []
   for (const match of matches.sort((left, right) => left.index - right.index)) {

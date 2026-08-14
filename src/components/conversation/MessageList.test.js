@@ -8,6 +8,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 vi.mock('@tauri-apps/api/path', () => ({ downloadDir: vi.fn(), join: vi.fn() }))
 vi.mock('../../services/desktop', () => ({ desktop: { resolveLocalFiles: vi.fn().mockResolvedValue([]) } }))
+import { desktop } from '../../services/desktop'
+import { useWorkspaceStore } from '../../stores/workspace'
 import MessageList from './MessageList.vue'
 
 let app
@@ -16,6 +18,7 @@ afterEach(() => {
   app?.unmount()
   app = null
   document.body.innerHTML = ''
+  vi.clearAllMocks()
 })
 
 describe('MessageList stream following', () => {
@@ -105,5 +108,59 @@ describe('MessageList stream following', () => {
     expect(root.querySelector('.snippet-capsule')?.textContent).toContain('1 selected text fragment')
     expect(root.querySelector('.snippet-capsule-tooltip')?.textContent).toContain('src/main.js')
     expect(root.querySelector('.message-file')?.textContent).toContain('requirements.md')
+  })
+
+  it('copies the submitted question from the user message footer', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({
+      render: () => h(MessageList, {
+        conversationId: 'conversation-1',
+        messages: [{ id: 'user-1', role: 'user', content: '帮我检查 Windows 拖动问题' }],
+        attachmentsByMessage: {},
+      }),
+    })
+    app.use(createPinia())
+    app.mount(root)
+    await nextTick()
+
+    const copy = root.querySelector('.message-copy-action')
+    expect(copy?.textContent).toContain('Copy message')
+    copy.click()
+
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('帮我检查 Windows 拖动问题'))
+    await vi.waitFor(() => expect(copy.textContent).toContain('Message copied'))
+  })
+
+  it('shows download cards only after an explicit request and an explicit download link', async () => {
+    desktop.resolveLocalFiles.mockResolvedValue([{ name: 'report.xlsx', path: '/project/exports/report.xlsx', size: 2048 }])
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const pinia = createPinia()
+    const store = useWorkspaceStore(pinia)
+    store.projects = [{ id: 'project-1', path: '/project' }]
+    store.activeProjectId = 'project-1'
+
+    app = createApp({
+      render: () => h(MessageList, {
+        conversationId: 'conversation-1',
+        messages: [
+          { id: 'user-read', role: 'user', content: '帮我读一下工程' },
+          { id: 'assistant-read', role: 'assistant', content: '读过 `package.json` 和 `cordis.patch.yml`。' },
+          { id: 'user-export', role: 'user', content: '请导出一份 Excel 报告' },
+          { id: 'assistant-export', role: 'assistant', content: '还参考了 `cordis.patch.yml`。\n\n[下载报告](./exports/report.xlsx)' },
+        ],
+        attachmentsByMessage: {},
+      }),
+    })
+    app.use(pinia)
+    app.mount(root)
+
+    await vi.waitFor(() => expect(desktop.resolveLocalFiles).toHaveBeenCalledOnce())
+    expect(desktop.resolveLocalFiles).toHaveBeenCalledWith('/project', ['./exports/report.xlsx'])
+    expect(root.querySelectorAll('.download-file-card')).toHaveLength(1)
+    expect(root.querySelector('.download-file-card')?.textContent).toContain('report.xlsx')
   })
 })

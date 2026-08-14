@@ -87,8 +87,17 @@ fn untracked_line_count(path: &Path) -> u32 {
         .unwrap_or(0)
 }
 
-#[tauri::command]
-pub fn git_status(project_path: String) -> Result<Vec<ChangedFile>, String> {
+async fn run_git_task<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Git task failed: {error}"))?
+}
+
+fn git_status_sync(project_path: String) -> Result<Vec<ChangedFile>, String> {
     let output = run_git(
         &project_path,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -131,7 +140,11 @@ pub fn git_status(project_path: String) -> Result<Vec<ChangedFile>, String> {
 }
 
 #[tauri::command]
-pub fn git_environment(project_path: String) -> Result<GitEnvironment, String> {
+pub async fn git_status(project_path: String) -> Result<Vec<ChangedFile>, String> {
+    run_git_task(move || git_status_sync(project_path)).await
+}
+
+fn git_environment_sync(project_path: String) -> Result<GitEnvironment, String> {
     if git_output(&project_path, &["rev-parse", "--is-inside-work-tree"]).is_err() {
         return Ok(GitEnvironment {
             is_repository: false,
@@ -180,7 +193,7 @@ pub fn git_environment(project_path: String) -> Result<GitEnvironment, String> {
         .or_else(|_| git_output(&project_path, &["diff", "--numstat", "--"]))
         .unwrap_or_default();
     let (mut additions, deletions) = parse_numstat(&numstat);
-    for file in git_status(project_path.clone())?
+    for file in git_status_sync(project_path.clone())?
         .into_iter()
         .filter(|file| file.status == "??")
     {
@@ -201,7 +214,11 @@ pub fn git_environment(project_path: String) -> Result<GitEnvironment, String> {
 }
 
 #[tauri::command]
-pub fn git_commit(
+pub async fn git_environment(project_path: String) -> Result<GitEnvironment, String> {
+    run_git_task(move || git_environment_sync(project_path)).await
+}
+
+fn git_commit_sync(
     project_path: String,
     message: String,
     push: bool,
@@ -225,8 +242,16 @@ pub fn git_commit(
 }
 
 #[tauri::command]
-pub fn git_diff(project_path: String, path: String) -> Result<String, String> {
-    let status = git_status(project_path.clone())?
+pub async fn git_commit(
+    project_path: String,
+    message: String,
+    push: bool,
+) -> Result<GitCommitResult, String> {
+    run_git_task(move || git_commit_sync(project_path, message, push)).await
+}
+
+fn git_diff_sync(project_path: String, path: String) -> Result<String, String> {
+    let status = git_status_sync(project_path.clone())?
         .into_iter()
         .find(|item| item.path == path)
         .map(|item| item.status)
@@ -248,10 +273,16 @@ pub fn git_diff(project_path: String, path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+#[tauri::command]
+pub async fn git_diff(project_path: String, path: String) -> Result<String, String> {
+    run_git_task(move || git_diff_sync(project_path, path)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        git_commit, git_environment, parse_numstat, untracked_file_diff, untracked_line_count,
+        git_commit_sync, git_environment_sync, parse_numstat, untracked_file_diff,
+        untracked_line_count,
     };
     use std::{fs, path::Path, process::Command, time::SystemTime};
 
@@ -314,12 +345,12 @@ mod tests {
         fs::write(repository.join("new.txt"), "one\ntwo\n").unwrap();
 
         let path = repository.to_string_lossy().to_string();
-        let environment = git_environment(path.clone()).unwrap();
+        let environment = git_environment_sync(path.clone()).unwrap();
         assert!(environment.is_repository);
         assert!(environment.additions >= 4);
         assert!(environment.deletions >= 1);
 
-        let result = git_commit(path, "test: save changes".into(), false).unwrap();
+        let result = git_commit_sync(path, "test: save changes".into(), false).unwrap();
         assert!(result.commit.contains("test: save changes"));
         assert!(!result.pushed);
         fs::remove_dir_all(repository).unwrap();

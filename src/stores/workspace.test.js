@@ -145,12 +145,13 @@ describe('workspace supplemental messages', () => {
     expect(store.activeMessages.at(-2)).toMatchObject({ role: 'assistant', content: '当前回答完成' })
     expect(store.activeMessages.at(-1)).toMatchObject({ role: 'user', content: '继续检查边界条件' })
     expect(store.activeRun.runId).toBe('run-next')
-    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
+    const request = desktop.sendClaude.mock.calls.at(-1)[0]
+    expect(request).toEqual(expect.objectContaining({
       conversationId: 'conversation-1',
       sessionId: 'session-1',
       resume: true,
-      prompt: '继续检查边界条件',
     }))
+    expect(request.prompt).toMatch(/^继续检查边界条件\n\nClaude Desk download requirement:/)
   })
 
   it('dispatches an external skill as a readable instruction file instead of a fake slash command', async () => {

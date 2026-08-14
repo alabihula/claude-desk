@@ -4,7 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { downloadDir, join } from '@tauri-apps/api/path'
 import { save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
+import { Check, Copy, Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
 import { desktop } from '../../services/desktop'
 import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from '../../services/localFiles'
 import { codeCopyPayload, createMessageMarkdown, externalHttpUrl, writeClipboardText } from '../../services/markdown'
@@ -22,7 +22,9 @@ const copyTimers = new Map()
 const downloadTimers = new Map()
 const downloadableFiles = ref([])
 const downloadStatus = ref({})
+const messageCopied = ref(false)
 let fileRequestId = 0
+let messageCopyTimer
 const rendered = computed(() => {
   let content = props.message.content || ''
   for (const attachment of props.attachments) {
@@ -91,6 +93,15 @@ async function handleMessageClick(event) {
   try { await openUrl(url) } catch (error) { store.error = String(error) }
 }
 
+async function copyMessage() {
+  try {
+    await writeClipboardText(props.message.content || '')
+    messageCopied.value = true
+    window.clearTimeout(messageCopyTimer)
+    messageCopyTimer = window.setTimeout(() => { messageCopied.value = false }, 1600)
+  } catch (error) { store.error = String(error) }
+}
+
 async function downloadLocalFile(file) {
   if (!store.activeProject || downloadStatus.value[file.path] === 'saving') return
   try {
@@ -117,6 +128,7 @@ async function downloadLocalFile(file) {
 onBeforeUnmount(() => {
   for (const timer of copyTimers.values()) window.clearTimeout(timer)
   for (const timer of downloadTimers.values()) window.clearTimeout(timer)
+  window.clearTimeout(messageCopyTimer)
 })
 </script>
 
@@ -161,5 +173,16 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </div>
+    <button
+      v-if="message.role === 'user'"
+      class="message-copy-action"
+      :class="{ copied: messageCopied }"
+      :title="t(messageCopied ? 'message.messageCopied' : 'message.copyMessage')"
+      @click="copyMessage"
+    >
+      <Check v-if="messageCopied" :size="13" />
+      <Copy v-else :size="13" />
+      {{ t(messageCopied ? 'message.messageCopied' : 'message.copyMessage') }}
+    </button>
   </article>
 </template>

@@ -26,6 +26,24 @@ struct RunningProcess {
     pid: u32,
     run_id: String,
     input: Arc<AsyncMutex<Option<ChildStdin>>>,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+}
+
+#[derive(Clone)]
+struct PendingPermission {
+    input: Value,
+    tool_name: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionDecision {
+    Deny,
+    AllowOnce,
+    AllowSessionTool,
+    AllowProjectTool,
+    AllowProjectServer,
+    AllowUserTool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +192,100 @@ async fn close_input(input: &Arc<AsyncMutex<Option<ChildStdin>>>) {
     }
 }
 
+fn permission_request(payload: &Value) -> Option<(String, PendingPermission, Value)> {
+    if payload.get("type").and_then(Value::as_str) != Some("control_request") {
+        return None;
+    }
+    let request = payload.get("request")?;
+    if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
+        return None;
+    }
+    let request_id = payload.get("request_id")?.as_str()?.to_string();
+    let input = request
+        .get("input")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let tool_name = request
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("Tool")
+        .to_string();
+    let event = serde_json::json!({
+        "requestId": request_id,
+        "toolName": tool_name,
+        "displayName": request.get("display_name").and_then(Value::as_str),
+        "description": request.get("description").and_then(Value::as_str),
+        "decisionReasonType": request.get("decision_reason_type").and_then(Value::as_str),
+        "toolUseId": request.get("tool_use_id").and_then(Value::as_str),
+        "input": input.clone(),
+    });
+    Some((request_id, PendingPermission { input, tool_name }, event))
+}
+
+fn mcp_server_rule(tool_name: &str) -> Option<String> {
+    let (server, action) = tool_name.strip_prefix("mcp__")?.split_once("__")?;
+    (!server.is_empty() && !action.is_empty()).then(|| format!("mcp__{server}__*"))
+}
+
+fn permission_update(
+    permission: &PendingPermission,
+    decision: PermissionDecision,
+) -> Result<Option<Value>, String> {
+    let destination = match decision {
+        PermissionDecision::AllowSessionTool => "session",
+        PermissionDecision::AllowProjectTool | PermissionDecision::AllowProjectServer => {
+            "localSettings"
+        }
+        PermissionDecision::AllowUserTool => "userSettings",
+        PermissionDecision::Deny | PermissionDecision::AllowOnce => return Ok(None),
+    };
+    if !permission.tool_name.starts_with("mcp__") {
+        return Err("Persistent approval is currently limited to MCP tools".into());
+    }
+    let tool_name = if decision == PermissionDecision::AllowProjectServer {
+        mcp_server_rule(&permission.tool_name).ok_or("The MCP server name is invalid")?
+    } else {
+        permission.tool_name.clone()
+    };
+    Ok(Some(serde_json::json!({
+        "type": "addRules",
+        "rules": [{ "toolName": tool_name }],
+        "behavior": "allow",
+        "destination": destination,
+    })))
+}
+
+fn permission_response(
+    request_id: &str,
+    permission: &PendingPermission,
+    decision: PermissionDecision,
+) -> Result<Value, String> {
+    let response = if decision == PermissionDecision::Deny {
+        serde_json::json!({
+            "behavior": "deny",
+            "message": "The user denied this tool request in Claude Desk.",
+            "interrupt": false,
+        })
+    } else {
+        let mut response = serde_json::json!({
+            "behavior": "allow",
+            "updatedInput": permission.input,
+        });
+        if let Some(update) = permission_update(permission, decision)? {
+            response["updatedPermissions"] = serde_json::json!([update]);
+        }
+        response
+    };
+    Ok(serde_json::json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": request_id,
+            "response": response,
+        }
+    }))
+}
+
 #[tauri::command]
 pub async fn send_claude(
     app: AppHandle,
@@ -253,6 +365,8 @@ pub async fn send_claude(
             "--verbose",
             "--include-partial-messages",
             "--replay-user-messages",
+            "--permission-prompt-tool",
+            "stdio",
         ]);
     if let Some(skill_path) = request.skill_path.as_deref() {
         // External Codex skills are shown only when the backend can still
@@ -300,6 +414,7 @@ pub async fn send_claude(
     let input = Arc::new(AsyncMutex::new(Some(
         child.stdin.take().ok_or("Claude stdin is unavailable")?,
     )));
+    let pending_permissions = Arc::new(Mutex::new(HashMap::new()));
     // Initialize the bidirectional protocol before sending the first user turn.
     write_input(
         &input,
@@ -332,6 +447,7 @@ pub async fn send_claude(
                 pid,
                 run_id: run_id.clone(),
                 input: input.clone(),
+                pending_permissions: pending_permissions.clone(),
             },
         );
 
@@ -340,6 +456,7 @@ pub async fn send_claude(
     let session_id = request.session_id.clone();
     let run_for_task = run_id.clone();
     let input_for_task = input.clone();
+    let permissions_for_task = pending_permissions.clone();
     tauri::async_runtime::spawn(async move {
         emit(
             &app_for_task,
@@ -359,6 +476,13 @@ pub async fn send_claude(
                 line = stdout_lines.next_line(), if !stdout_done => match line {
                     Ok(Some(line)) => {
                         let payload = serde_json::from_str(&line).unwrap_or_else(|_| serde_json::json!({ "text": line }));
+                        if let Some((request_id, permission, event)) = permission_request(&payload) {
+                            if let Ok(mut pending) = permissions_for_task.lock() {
+                                pending.insert(request_id, permission);
+                            }
+                            emit(&app_for_task, &conversation_id, &run_for_task, "permission", event);
+                            continue;
+                        }
                         let is_result = payload.get("type").and_then(Value::as_str) == Some("result");
                         if is_result {
                             context_window = context::context_window(payload.get("modelUsage"));
@@ -453,6 +577,37 @@ pub async fn send_claude(
 }
 
 #[tauri::command]
+pub async fn respond_claude_permission(
+    state: State<'_, ClaudeProcesses>,
+    conversation_id: String,
+    run_id: String,
+    request_id: String,
+    decision: PermissionDecision,
+) -> Result<(), String> {
+    let (input, pending_permissions) = {
+        let running = state
+            .running
+            .lock()
+            .map_err(|_| "Claude process state is unavailable")?;
+        let process = running
+            .get(&conversation_id)
+            .ok_or("Claude is no longer waiting for this permission")?;
+        if process.run_id != run_id {
+            return Err("This permission request belongs to an older Claude run".into());
+        }
+        (process.input.clone(), process.pending_permissions.clone())
+    };
+    // Taking the request before the async write makes repeated button clicks idempotent.
+    let permission = pending_permissions
+        .lock()
+        .map_err(|_| "Claude permission state is unavailable")?
+        .remove(&request_id)
+        .ok_or("This permission request is no longer pending")?;
+    let response = permission_response(&request_id, &permission, decision)?;
+    write_input(&input, &response).await
+}
+
+#[tauri::command]
 pub async fn interrupt_claude(
     state: State<'_, ClaudeProcesses>,
     conversation_id: String,
@@ -491,4 +646,145 @@ pub fn stop_claude(
         return Ok(());
     };
     platform::stop_process_tree(process.pid, &process.run_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{permission_request, permission_response, PendingPermission, PermissionDecision};
+    use serde_json::json;
+
+    #[test]
+    fn extracts_tool_permission_requests_for_the_product_ui() {
+        let payload = json!({
+            "type": "control_request",
+            "request_id": "permission-1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "mcp__github__create_issue",
+                "display_name": "Create issue",
+                "input": { "title": "Bug" },
+                "description": "Create an issue",
+                "tool_use_id": "tool-1"
+            }
+        });
+        let (request_id, pending, event) = permission_request(&payload).unwrap();
+
+        assert_eq!(request_id, "permission-1");
+        assert_eq!(pending.input, json!({ "title": "Bug" }));
+        assert_eq!(pending.tool_name, "mcp__github__create_issue");
+        assert_eq!(event["toolName"], "mcp__github__create_issue");
+        assert_eq!(event["requestId"], "permission-1");
+    }
+
+    #[test]
+    fn builds_allow_and_deny_control_responses() {
+        let (_, permission, _) = permission_request(&json!({
+            "type": "control_request",
+            "request_id": "permission-1",
+            "request": { "subtype": "can_use_tool", "input": { "path": "README.md" } }
+        }))
+        .unwrap();
+
+        let allow = permission_response("permission-1", &permission, PermissionDecision::AllowOnce)
+            .unwrap();
+        assert_eq!(allow["response"]["response"]["behavior"], "allow");
+        assert_eq!(
+            allow["response"]["response"]["updatedInput"]["path"],
+            "README.md"
+        );
+        let deny =
+            permission_response("permission-1", &permission, PermissionDecision::Deny).unwrap();
+        assert_eq!(deny["response"]["response"]["behavior"], "deny");
+        assert_eq!(deny["response"]["response"]["interrupt"], false);
+    }
+
+    #[test]
+    fn scopes_persistent_mcp_permissions_without_frontend_rule_input() {
+        let (_, permission, _) = permission_request(&json!({
+            "type": "control_request",
+            "request_id": "permission-1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "mcp__github__create_issue",
+                "input": { "title": "Bug" }
+            }
+        }))
+        .unwrap();
+
+        let project_tool = permission_response(
+            "permission-1",
+            &permission,
+            PermissionDecision::AllowProjectTool,
+        )
+        .unwrap();
+        let update = &project_tool["response"]["response"]["updatedPermissions"][0];
+        assert_eq!(update["destination"], "localSettings");
+        assert_eq!(update["rules"][0]["toolName"], "mcp__github__create_issue");
+
+        let session_tool = permission_response(
+            "permission-1",
+            &permission,
+            PermissionDecision::AllowSessionTool,
+        )
+        .unwrap();
+        assert_eq!(
+            session_tool["response"]["response"]["updatedPermissions"][0]["destination"],
+            "session"
+        );
+
+        let project_server = permission_response(
+            "permission-1",
+            &permission,
+            PermissionDecision::AllowProjectServer,
+        )
+        .unwrap();
+        assert_eq!(
+            project_server["response"]["response"]["updatedPermissions"][0]["rules"][0]["toolName"],
+            "mcp__github__*"
+        );
+
+        let global_tool = permission_response(
+            "permission-1",
+            &permission,
+            PermissionDecision::AllowUserTool,
+        )
+        .unwrap();
+        assert_eq!(
+            global_tool["response"]["response"]["updatedPermissions"][0]["destination"],
+            "userSettings"
+        );
+    }
+
+    #[test]
+    fn refuses_to_persist_broad_non_mcp_rules() {
+        let permission = PendingPermission {
+            input: json!({ "command": "pnpm test" }),
+            tool_name: "Bash".into(),
+        };
+        assert!(permission_response(
+            "permission-1",
+            &permission,
+            PermissionDecision::AllowProjectTool,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn deserializes_only_known_permission_decisions() {
+        assert_eq!(
+            serde_json::from_value::<PermissionDecision>(json!("allowProjectTool")).unwrap(),
+            PermissionDecision::AllowProjectTool
+        );
+        assert!(serde_json::from_value::<PermissionDecision>(json!("allowEverything")).is_err());
+    }
+
+    #[test]
+    fn ignores_unrelated_control_messages() {
+        assert!(permission_request(&json!({
+            "type": "control_request",
+            "request_id": "interrupt-1",
+            "request": { "subtype": "interrupt" }
+        }))
+        .is_none());
+    }
 }

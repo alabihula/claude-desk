@@ -7,6 +7,7 @@ import DiffDrawer from './components/diff/DiffDrawer.vue'
 import EnvironmentPanel from './components/diff/EnvironmentPanel.vue'
 import SettingsModal from './components/common/SettingsModal.vue'
 import PermissionsModal from './components/common/PermissionsModal.vue'
+import ToolPermissionModal from './components/common/ToolPermissionModal.vue'
 import ImageLightbox from './components/common/ImageLightbox.vue'
 import Home from './views/Home.vue'
 import Workspace from './views/Workspace.vue'
@@ -27,6 +28,7 @@ function shortcuts(event) {
   if (primary && event.key.toLowerCase() === 'p') { event.preventDefault(); store.workspaceView = 'files' }
   if (primary && event.key === ',') { event.preventDefault(); store.settingsOpen = true }
   if (event.key === 'Escape') {
+    if (store.activePermissionRequest) return
     if (store.previewAttachment) store.previewAttachment = null
     else if (store.permissionsOpen) store.permissionsOpen = false
     else if (store.environmentPanel) store.environmentPanel = false
@@ -68,6 +70,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', shortcuts); unlist
     <EnvironmentPanel />
     <SettingsModal />
     <PermissionsModal />
+    <ToolPermissionModal />
     <ImageLightbox />
   </div>
 </template>

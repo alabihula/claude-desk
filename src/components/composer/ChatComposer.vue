@@ -42,7 +42,17 @@ const selectedSkill = computed({
 const skillIndex = ref(0)
 const skillMenuDismissed = ref(false)
 const skillQuery = computed(() => slashSkillQuery(text.value))
-const visibleSkills = computed(() => matchingSkills(skills.value, skillQuery.value))
+const builtInCommands = computed(() => [{
+  name: 'mcp',
+  description: t('skills.mcpDescription'),
+  scope: 'builtIn',
+  invocation: 'native',
+}])
+const slashItems = computed(() => [
+  ...builtInCommands.value,
+  ...skills.value.filter((skill) => skill.name !== 'mcp'),
+])
+const visibleSkills = computed(() => matchingSkills(slashItems.value, skillQuery.value))
 const skillMenuOpen = computed(() => skillQuery.value !== null && !skillMenuDismissed.value && visibleSkills.value.length > 0)
 
 async function addPaths(paths, conversationId = store.activeConversationId) {

@@ -1,8 +1,10 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
 import { CheckCircle2, Code2, Eye, EyeOff, RefreshCw, SlidersHorizontal, X, XCircle } from 'lucide-vue-next'
+import { confirm } from '@tauri-apps/plugin-dialog'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { applyVisualClaudeSettings, visualFromClaudeSettings } from '../../services/claude/settings'
+import { desktop } from '../../services/desktop'
 import { useI18n } from '../../services/i18n'
 
 const store = useWorkspaceStore()
@@ -65,6 +67,11 @@ async function reload() {
   reset()
 }
 
+async function changeLanguage() {
+  try { await store.setLanguage(form.language) }
+  catch (error) { store.error = String(error) }
+}
+
 async function save() {
   if (mode.value === 'visual' && form.contextWindow && !/^\d+$/.test(form.contextWindow.trim())) {
     formError.value = t('settings.contextInteger')
@@ -77,7 +84,13 @@ async function save() {
     const content = mode.value === 'json'
       ? JSON.stringify(parsed, null, 2)
       : JSON.stringify(applyVisualClaudeSettings(parsed, form), null, 2)
+    const restartRequired = store.languageRestartRequired
     await store.saveConfiguration(content, { theme: form.theme, editor: form.editor, language: form.language })
+    if (restartRequired && await confirm(t('settings.languageRestartBody'), {
+      title: t('settings.languageRestartTitle'),
+      okLabel: t('settings.restartNow'),
+      cancelLabel: t('settings.restartLater'),
+    })) await desktop.restartApp()
   } catch (error) {
     store.error = String(error)
   } finally {
@@ -125,7 +138,7 @@ async function save() {
           <div class="settings-heading"><h3>{{ t('settings.app') }}</h3><p>{{ t('settings.appHelp') }}</p></div>
           <div class="three-column">
             <label>{{ t('settings.appearance') }}<select v-model="form.theme"><option value="system">{{ t('settings.system') }}</option><option value="light">{{ t('settings.light') }}</option><option value="dark">{{ t('settings.dark') }}</option></select></label>
-            <label>{{ t('settings.language') }}<select v-model="form.language" @change="store.setLanguage(form.language)"><option value="en">{{ t('settings.english') }}</option><option value="zh-CN">{{ t('settings.chinese') }}</option></select></label>
+            <label>{{ t('settings.language') }}<select v-model="form.language" @change="changeLanguage"><option value="en">{{ t('settings.english') }}</option><option value="zh-CN">{{ t('settings.chinese') }}</option></select></label>
             <label>{{ t('settings.openLinks') }} <span>{{ t('settings.openLinksHelp') }}</span><select v-model="form.editor"><option value="claude-desk">Claude Desk</option><option value="vscode">VS Code</option><option value="cursor">Cursor</option><option value="system">{{ t('settings.systemDefault') }}</option></select></label>
           </div>
           <button class="settings-link" @click="store.settingsOpen = false; store.permissionsOpen = true">{{ t('settings.accessManaged') }}</button>
@@ -135,7 +148,7 @@ async function save() {
           </div>
         </section>
       </div>
-      <footer><span class="save-note">{{ t('settings.noRestart') }}</span><button class="secondary-button" @click="store.settingsOpen = false">{{ t('common.cancel') }}</button><button class="primary-button" :disabled="saving" @click="save">{{ t(saving ? 'settings.saving' : 'settings.save') }}</button></footer>
+      <footer><span class="save-note">{{ t(store.languageRestartRequired ? 'settings.languageRestartRequired' : 'settings.noRestart') }}</span><button class="secondary-button" @click="store.settingsOpen = false">{{ t('common.cancel') }}</button><button class="primary-button" :disabled="saving" @click="save">{{ t(saving ? 'settings.saving' : 'settings.save') }}</button></footer>
     </section>
   </div>
 </template>

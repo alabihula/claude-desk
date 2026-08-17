@@ -279,7 +279,9 @@ describe('ChatComposer attachments', () => {
     textarea.value = '/'
     textarea.dispatchEvent(new Event('input'))
     await nextTick()
-    root.querySelector('.slash-skill-option').click()
+    ;[...root.querySelectorAll('.slash-skill-option')]
+      .find((option) => option.textContent.includes('/superpowers:brainstorming'))
+      .click()
     await nextTick()
     textarea.value = '/superpowers:brainstorming 设计登录方案'
     textarea.dispatchEvent(new Event('input'))
@@ -293,6 +295,44 @@ describe('ChatComposer attachments', () => {
       { name: 'superpowers:brainstorming', path: '/tmp/superpowers/skills/brainstorming/SKILL.md' },
       [],
     )
+  })
+
+  it('offers the built-in MCP status command in the slash menu', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    store.sendMessage = vi.fn()
+    desktop.listClaudeSkills.mockResolvedValue([{
+      name: 'aliyun-observability',
+      description: 'Configure an MCP endpoint',
+      scope: 'codex',
+      invocation: 'external',
+      path: '/tmp/aliyun/SKILL.md',
+    }])
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/m'
+    textarea.dispatchEvent(new Event('input'))
+    await nextTick()
+    const option = root.querySelector('.slash-skill-option')
+    expect(option?.textContent).toContain('/mcp')
+    expect(option?.textContent).toContain('configured MCP servers')
+    option.click()
+    await nextTick()
+    expect(textarea.value).toBe('/mcp ')
+
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await flushPromises()
+    expect(store.sendMessage).toHaveBeenCalledWith('/mcp ', [], null, [])
   })
 
   it('shows selected code as a compact capsule and sends the structured fragments', async () => {

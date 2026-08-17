@@ -230,6 +230,69 @@ pub fn stop_process_tree(pid: u32, run_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn native_app_language(language: &str) -> Result<&'static str, String> {
+    match language {
+        "en" => Ok("en"),
+        "zh-CN" => Ok("zh-Hans"),
+        _ => Err("Unsupported application language".into()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn sync_macos_app_language(language: &str) -> Result<bool, String> {
+    use core_foundation::{array::CFArray, base::TCFType, string::CFString};
+    use core_foundation_sys::{
+        bundle::CFBundleCopyPreferredLocalizationsFromArray,
+        preferences::{
+            kCFPreferencesCurrentApplication, CFPreferencesAppSynchronize, CFPreferencesSetAppValue,
+        },
+    };
+
+    let desired = native_app_language(language)?;
+    let supported = CFArray::from_CFTypes(&[CFString::new("en"), CFString::new("zh-Hans")]);
+    let preferred = unsafe {
+        let value = CFBundleCopyPreferredLocalizationsFromArray(supported.as_concrete_TypeRef());
+        if value.is_null() {
+            return Err("Could not resolve the macOS application language".into());
+        }
+        CFArray::<CFString>::wrap_under_create_rule(value)
+    };
+    if preferred
+        .get(0)
+        .is_some_and(|current| current.to_string() == desired)
+    {
+        return Ok(false);
+    }
+
+    let key = CFString::new("AppleLanguages");
+    let languages = CFArray::from_CFTypes(&[CFString::new(desired)]);
+    unsafe {
+        CFPreferencesSetAppValue(
+            key.as_concrete_TypeRef(),
+            languages.as_CFTypeRef(),
+            kCFPreferencesCurrentApplication,
+        );
+        if CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication) == 0 {
+            return Err("Could not save the macOS application language".into());
+        }
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn sync_app_language(language: String) -> Result<bool, String> {
+    native_app_language(&language)?;
+    #[cfg(target_os = "macos")]
+    return sync_macos_app_language(&language);
+    #[cfg(not(target_os = "macos"))]
+    Ok(false)
+}
+
+#[tauri::command]
+pub fn restart_app(app: tauri::AppHandle) {
+    app.request_restart();
+}
+
 pub fn open_in_editor(path: &str, line: Option<u32>, editor: &str) -> Result<(), String> {
     let target = line
         .map(|line| format!("{path}:{line}"))
@@ -352,7 +415,7 @@ pub fn open_terminal(path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_claude_desk_executable, resolve_command, same_executable};
+    use super::{is_claude_desk_executable, native_app_language, resolve_command, same_executable};
     use std::{collections::HashMap, fs};
     use uuid::Uuid;
 
@@ -399,6 +462,13 @@ mod tests {
         assert!(!is_claude_desk_executable(std::path::Path::new(
             "claude.exe"
         )));
+    }
+
+    #[test]
+    fn maps_supported_interface_languages_to_native_locales() {
+        assert_eq!(native_app_language("en"), Ok("en"));
+        assert_eq!(native_app_language("zh-CN"), Ok("zh-Hans"));
+        assert!(native_app_language("fr").is_err());
     }
 
     #[cfg(windows)]

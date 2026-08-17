@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { createApp, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { confirm } from '@tauri-apps/plugin-dialog'
+import { desktop } from '../../services/desktop'
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({ confirm: vi.fn() }))
+vi.mock('../../services/desktop', () => ({ desktop: { restartApp: vi.fn() } }))
+
 import { useWorkspaceStore } from '../../stores/workspace'
 import SettingsModal from './SettingsModal.vue'
 
@@ -24,6 +30,7 @@ beforeEach(() => {
 afterEach(() => {
   app.unmount()
   document.body.innerHTML = ''
+  vi.clearAllMocks()
 })
 
 describe('SettingsModal', () => {
@@ -35,5 +42,25 @@ describe('SettingsModal', () => {
     root.querySelector('.settings-modal header .icon-button').click()
     await nextTick()
     expect(store.settingsOpen).toBe(false)
+  })
+
+  it('explains when a native dialog language change needs a restart', async () => {
+    store.languageRestartRequired = true
+    await nextTick()
+
+    expect(root.querySelector('.save-note')?.textContent).toContain('native system dialogs')
+  })
+
+  it('offers to restart after saving a native dialog language change', async () => {
+    store.languageRestartRequired = true
+    store.saveConfiguration = vi.fn(async () => { store.settingsOpen = false })
+    confirm.mockResolvedValueOnce(true)
+
+    root.querySelector('footer .primary-button').click()
+    await vi.waitFor(() => expect(desktop.restartApp).toHaveBeenCalledOnce())
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('macOS system dialogs'), expect.objectContaining({
+      okLabel: 'Restart Now',
+    }))
   })
 })

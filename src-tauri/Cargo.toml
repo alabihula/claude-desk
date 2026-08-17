@@ -1,6 +1,6 @@
 [package]
 name = "claude-desk"
-version = "0.1.34"
+version = "0.1.35"
 description = "A focused desktop client for Claude Code"
 authors = ["Claude Desk"]
 edition = "2021"
@@ -28,3 +28,7 @@ dirs = "6"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"

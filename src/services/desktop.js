@@ -21,6 +21,8 @@ export const desktop = {
   linkAttachments: (messageId, attachmentIds) => invoke('link_attachments', { messageId, attachmentIds }),
   loadSettings: () => invoke('load_settings'),
   saveSettings: (settings) => invoke('save_settings', { settings }),
+  syncAppLanguage: (language) => invoke('sync_app_language', { language }),
+  restartApp: () => invoke('restart_app'),
   loadClaudeSettings: () => invoke('load_claude_settings'),
   saveClaudeSettings: (content) => invoke('save_claude_settings', { content }),
   copyAttachment: (conversationId, sourcePath) => invoke('copy_attachment', { conversationId, sourcePath }),
@@ -39,6 +41,7 @@ export const desktop = {
   listClaudeSkills: (projectPath) => invoke('list_claude_skills', { projectPath }),
   checkClaude: (command, env) => invoke('check_claude', { command, env }),
   sendClaude: (request) => invoke('send_claude', { request }),
+  respondClaudePermission: (conversationId, runId, requestId, decision) => invoke('respond_claude_permission', { conversationId, runId, requestId, decision }),
   interruptClaude: (conversationId) => invoke('interrupt_claude', { conversationId }),
   stopClaude: (conversationId) => invoke('stop_claude', { conversationId }),
 }

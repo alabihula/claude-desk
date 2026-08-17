@@ -1,5 +1,5 @@
 <script setup>
-import { Command, CornerDownLeft } from 'lucide-vue-next'
+import { Command, CornerDownLeft, Plug } from 'lucide-vue-next'
 import { useI18n } from '../../services/i18n'
 
 defineProps({
@@ -22,7 +22,8 @@ const { t } = useI18n()
       @mousedown.prevent
       @click="$emit('select', skill)"
     >
-      <Command :size="15" />
+      <Plug v-if="skill.name === 'mcp' && skill.scope === 'builtIn'" :size="15" />
+      <Command v-else :size="15" />
       <span class="slash-skill-copy"><strong>/{{ skill.name }}</strong><small>{{ skill.description || t('skills.noDescription') }}</small></span>
       <em>{{ t(`skills.${skill.scope}`) }}</em>
       <CornerDownLeft v-if="index === activeIndex" :size="13" />

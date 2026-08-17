@@ -7,7 +7,22 @@ export function matchingSkills(skills, query) {
   const needle = String(query || '').toLocaleLowerCase()
   return [...skills]
     .filter((skill) => !needle || `${skill.name} ${skill.description || ''}`.toLocaleLowerCase().includes(needle))
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .sort((left, right) => {
+      const rankDifference = skillMatchRank(left, needle) - skillMatchRank(right, needle)
+      if (rankDifference) return rankDifference
+      if (left.scope === 'builtIn' && right.scope !== 'builtIn') return -1
+      if (right.scope === 'builtIn' && left.scope !== 'builtIn') return 1
+      return left.name.localeCompare(right.name)
+    })
+}
+
+function skillMatchRank(skill, needle) {
+  if (!needle) return 0
+  const name = skill.name.toLocaleLowerCase()
+  if (name === needle) return 0
+  if (name.startsWith(needle)) return 1
+  if (name.includes(needle)) return 2
+  return 3
 }
 
 export function selectedSkillInput(skill) {
@@ -16,6 +31,11 @@ export function selectedSkillInput(skill) {
     text: `/${skill.name} `,
     skill: skill.invocation === 'external' ? { name: skill.name, path: skill.path } : null,
   }
+}
+
+export function standaloneClaudeCommand(content) {
+  const command = String(content || '').trim()
+  return command === '/mcp' ? command : null
 }
 
 export function externalSkillPrompt(content, skill) {

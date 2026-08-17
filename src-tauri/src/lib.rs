@@ -63,6 +63,8 @@ pub fn run() {
             files::open_in_editor,
             files::reveal_path,
             files::open_terminal,
+            platform::sync_app_language,
+            platform::restart_app,
             git::git_status,
             git::git_environment,
             git::git_diff,
@@ -70,6 +72,7 @@ pub fn run() {
             skills::list_claude_skills,
             claude::check_claude,
             claude::send_claude,
+            claude::respond_claude_permission,
             claude::interrupt_claude,
             claude::stop_claude,
         ])

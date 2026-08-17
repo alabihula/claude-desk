@@ -4,9 +4,10 @@ import { desktop } from '../services/desktop'
 import { attachmentPrompt } from '../services/attachments'
 import { preferredChange } from '../services/changes'
 import { parseClaudeEvent } from '../services/claude/parser'
+import { normalizePermissionRequest } from '../services/claude/permissions'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { withRuntimeGuidance } from '../services/claude/runtime'
-import { externalSkillPrompt } from '../services/skills'
+import { externalSkillPrompt, standaloneClaudeCommand } from '../services/skills'
 import { fileSelectionsPrompt } from '../services/localFiles'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
@@ -107,7 +108,9 @@ export const useWorkspaceStore = defineStore('workspace', {
     loading: true,
     error: '',
     settingsOpen: false,
+    languageRestartRequired: false,
     permissionsOpen: false,
+    permissionRequests: [],
     sidebarCollapsed: false,
     previewAttachment: null,
     filePreview: null,
@@ -126,6 +129,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       return Object.fromEntries(this.activeMessages.map((message) => [message.id, state.attachmentsByMessage[message.id] || []]))
     },
     activeRun(state) { return state.runs[state.activeConversationId] || null },
+    activePermissionRequest: (state) => state.permissionRequests[0] || null,
     activeQueuedMessages(state) { return state.queuedMessages[state.activeConversationId] || [] },
     activeContext(state) {
       const env = this.claudeSettings?.env || {}
@@ -171,6 +175,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.loading = true
       try {
         this.settings = { ...defaultSettings, ...(await desktop.loadSettings()) }
+        this.languageRestartRequired = await desktop.syncAppLanguage(this.settings.language)
         await this.reloadClaudeSettings()
         this.projects = await desktop.listProjects()
         this.eventUnlisten = await listen('claude-event', ({ payload }) => this.handleClaudeEvent(payload))
@@ -251,6 +256,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.settings = { ...this.settings, language }
       if (typeof document !== 'undefined') document.documentElement.lang = language
       await desktop.saveSettings(this.settings)
+      this.languageRestartRequired = await desktop.syncAppLanguage(language)
+      return this.languageRestartRequired
     },
 
     async removeProject(project) {
@@ -452,11 +459,14 @@ export const useWorkspaceStore = defineStore('workspace', {
 
       this.runs[queued.conversationId] = newRun('chat', this.contextStats[queued.conversationId])
       try {
+        const nativeCommand = !queued.attachments.length && !queued.snippets.length && !queued.skill
+          ? standaloneClaudeCommand(content)
+          : null
         const runId = await desktop.sendClaude({
           conversationId: queued.conversationId,
           sessionId: queued.sessionId,
           projectPath: queued.projectPath,
-          prompt: withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
+          prompt: nativeCommand || withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
           resume: hasPreviousUserMessage,
           command: this.settings.command,
           args: this.settings.args,
@@ -522,9 +532,30 @@ export const useWorkspaceStore = defineStore('workspace', {
       try { await desktop.stopClaude(conversationId) } catch (error) { this.runs[conversationId].error = String(error) }
     },
 
+    async respondPermission(requestId, decision) {
+      const request = this.permissionRequests.find((item) => item.requestId === requestId)
+      if (!request || request.responding) return
+      request.responding = true
+      try {
+        await desktop.respondClaudePermission(request.conversationId, request.runId, request.requestId, decision)
+        this.permissionRequests = this.permissionRequests.filter((item) => item.requestId !== requestId)
+      } catch (error) {
+        // A failed control-channel write cannot be retried safely with the same request id.
+        this.permissionRequests = this.permissionRequests.filter((item) => item.requestId !== requestId)
+        this.error = String(error)
+      }
+    },
+
     handleClaudeEvent(payload) {
       const run = this.runs[payload.conversationId]
       if (!run || (run.runId && run.runId !== payload.runId)) return
+      if (payload.kind === 'permission') {
+        const request = normalizePermissionRequest(payload.data, payload.conversationId, payload.runId)
+        if (request && !this.permissionRequests.some((item) => item.requestId === request.requestId)) {
+          this.permissionRequests.push(request)
+        }
+        return
+      }
       if (payload.kind === 'started' && run.status === 'starting') run.status = 'running'
       if (payload.kind === 'stderr') run.error = payload.data?.message || ''
       if (payload.kind === 'context') {
@@ -570,6 +601,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async finishRun(conversationId, shouldContinue) {
+      const runId = this.runs[conversationId]?.runId
+      this.permissionRequests = this.permissionRequests.filter((request) => (
+        request.conversationId !== conversationId || request.runId !== runId
+      ))
       await this.finalizeRun(conversationId)
       delete this.runs[conversationId]
       if (shouldContinue) await this.dispatchNextQueued(conversationId)

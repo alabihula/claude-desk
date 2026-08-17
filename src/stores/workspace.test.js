@@ -7,12 +7,15 @@ vi.mock('../services/desktop', () => ({
     saveMessage: vi.fn(),
     linkAttachments: vi.fn(),
     sendClaude: vi.fn(),
+    respondClaudePermission: vi.fn(),
     interruptClaude: vi.fn(),
     stopClaude: vi.fn(),
     removeProject: vi.fn(),
     reorderProjects: vi.fn(),
     reorderConversations: vi.fn(),
     saveSettings: vi.fn(),
+    syncAppLanguage: vi.fn(),
+    restartApp: vi.fn(),
     touchProject: vi.fn(),
     touchConversation: vi.fn(),
     createConversation: vi.fn(),
@@ -67,6 +70,7 @@ describe('workspace supplemental messages', () => {
     desktop.saveMessage.mockImplementation(async (conversationId, role, content, snippets = []) => ({ id: `message-${++messageId}`, conversationId, role, content, snippets }))
     desktop.sendClaude.mockResolvedValue('run-next')
     desktop.interruptClaude.mockResolvedValue()
+    desktop.respondClaudePermission.mockResolvedValue()
     desktop.createConversation.mockResolvedValue({ id: 'conversation-new', projectId: 'project-1', title: 'New conversation' })
     desktop.listConversations.mockResolvedValue([])
     desktop.listMessages.mockResolvedValue([])
@@ -76,6 +80,7 @@ describe('workspace supplemental messages', () => {
       isRepository: true, branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0, additions: 0, deletions: 0,
     })
     desktop.refreshContextStats.mockResolvedValue(null)
+    desktop.syncAppLanguage.mockResolvedValue(false)
   })
 
   it('keeps the selected project when a new-conversation click passes an event argument', async () => {
@@ -117,6 +122,14 @@ describe('workspace supplemental messages', () => {
     delete store.runs['conversation-1']
     await store.dispatchNextQueued('conversation-1')
     expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet[1m]', effort: 'high' }))
+  })
+
+  it('sends the built-in MCP command without appending normal prompt guidance', async () => {
+    const store = setupStore()
+
+    await store.sendMessage('/mcp')
+
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ prompt: '/mcp' }))
   })
 
   it('prioritizes the selected supplement and interrupts the current run', async () => {
@@ -465,10 +478,58 @@ describe('workspace supplemental messages', () => {
 
   it('persists interface language changes immediately', async () => {
     const store = setupStore()
+    desktop.syncAppLanguage.mockResolvedValueOnce(true)
 
     await store.setLanguage('zh-CN')
 
     expect(store.settings.language).toBe('zh-CN')
     expect(desktop.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ language: 'zh-CN' }))
+    expect(desktop.syncAppLanguage).toHaveBeenCalledWith('zh-CN')
+    expect(store.languageRestartRequired).toBe(true)
+  })
+
+  it('queues a tool permission request and returns the user decision to the same run', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1',
+      runId: 'run-current',
+      kind: 'permission',
+      data: {
+        requestId: 'permission-1',
+        toolName: 'mcp__github__create_issue',
+        input: { title: 'Bug' },
+      },
+    })
+
+    expect(store.activePermissionRequest).toMatchObject({
+      requestId: 'permission-1',
+      server: 'github',
+      action: 'create_issue',
+    })
+    await store.respondPermission('permission-1', 'allowProjectTool')
+
+    expect(desktop.respondClaudePermission).toHaveBeenCalledWith(
+      'conversation-1', 'run-current', 'permission-1', 'allowProjectTool',
+    )
+    expect(store.activePermissionRequest).toBeNull()
+  })
+
+  it('ignores duplicate and stale permission events and clears pending requests when a run ends', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    const current = {
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'permission',
+      data: { requestId: 'permission-1', toolName: 'Bash', input: { command: 'pnpm test' } },
+    }
+
+    store.handleClaudeEvent(current)
+    store.handleClaudeEvent(current)
+    store.handleClaudeEvent({ ...current, runId: 'run-old', data: { ...current.data, requestId: 'permission-old' } })
+
+    expect(store.permissionRequests.map((request) => request.requestId)).toEqual(['permission-1'])
+    await store.finishRun('conversation-1', false)
+    expect(store.permissionRequests).toEqual([])
   })
 })

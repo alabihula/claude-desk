@@ -23,7 +23,8 @@ Do not combine rendering, filesystem access, data conversion, and process contro
 - Claude runs through structured `stream-json` input/output. Preserve partial-message streaming and structured interrupt requests.
 - Supplemental messages are queued per conversation. Normal completion dispatches FIFO; “立即调整” interrupts the current turn and resumes the same Claude session with the selected message first.
 - Stop and steer are different actions. Stop must not silently dispatch queued messages.
-- A Claude `result` frame means the model has answered, not that its child process has exited. Keep the UI in a finishing state until the backend emits `exit`.
+- A Claude `result` frame marks a protocol result, not necessarily a user-visible answer and not the child-process exit. Keep the UI in a finishing state until the backend emits `exit`. A successful chat exit with no response text is a product error: pause queued follow-ups, persist a diagnostic event, and never label it completed.
+- Claude run diagnostics are privacy-bounded product telemetry under Application Support. Record structural counters and exit metadata instead of raw stdout or chat/code content; bound stderr, redact common credentials and home paths, retain only the most recent runs, and resolve exports from backend-validated conversation/run identifiers.
 - Local download cards may only resolve existing files inside the active project after canonical path validation in Rust. Never trust a model-produced path in the webview alone.
 - Attachments are app-owned copies under Application Support and are linked to messages in SQLite.
 - Requests to start development services must use a platform-native detached process (`launchd` on macOS, detached PowerShell `Start-Process` on Windows) and verify the target port before reporting success; ordinary Claude Code background tasks do not provide persistence across session cleanup.

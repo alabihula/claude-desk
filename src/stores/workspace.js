@@ -5,12 +5,14 @@ import { attachmentPrompt } from '../services/attachments'
 import { preferredChange } from '../services/changes'
 import { parseClaudeEvent } from '../services/claude/parser'
 import { normalizePermissionRequest } from '../services/claude/permissions'
+import { normalizeQuestionRequest } from '../services/claude/questions'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { withRuntimeGuidance } from '../services/claude/runtime'
-import { externalSkillPrompt, standaloneClaudeCommand } from '../services/skills'
+import { externalSkillPrompt } from '../services/skills'
 import { fileSelectionsPrompt } from '../services/localFiles'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
+import { diagnosticMessage } from '../services/claude/diagnostics'
 
 const defaultSettings = {
   command: 'claude',
@@ -65,7 +67,10 @@ function newRun(operation = 'chat', context = null) {
     error: '',
     finalized: false,
     sawPartialText: false,
+    receivedResult: false,
+    resultValueType: 'missing',
     permissionDenied: false,
+    diagnosticKind: '',
     context: context ? { ...context } : { tokens: 0, window: 0, measured: false },
   }
 }
@@ -111,6 +116,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     languageRestartRequired: false,
     permissionsOpen: false,
     permissionRequests: [],
+    questionRequests: [],
     sidebarCollapsed: false,
     previewAttachment: null,
     filePreview: null,
@@ -130,6 +136,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
     activeRun(state) { return state.runs[state.activeConversationId] || null },
     activePermissionRequest: (state) => state.permissionRequests[0] || null,
+    activeQuestionRequest: (state) => state.questionRequests[0] || null,
     activeQueuedMessages(state) { return state.queuedMessages[state.activeConversationId] || [] },
     activeContext(state) {
       const env = this.claudeSettings?.env || {}
@@ -459,14 +466,11 @@ export const useWorkspaceStore = defineStore('workspace', {
 
       this.runs[queued.conversationId] = newRun('chat', this.contextStats[queued.conversationId])
       try {
-        const nativeCommand = !queued.attachments.length && !queued.snippets.length && !queued.skill
-          ? standaloneClaudeCommand(content)
-          : null
         const runId = await desktop.sendClaude({
           conversationId: queued.conversationId,
           sessionId: queued.sessionId,
           projectPath: queued.projectPath,
-          prompt: nativeCommand || withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
+          prompt: withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
           resume: hasPreviousUserMessage,
           command: this.settings.command,
           args: this.settings.args,
@@ -546,6 +550,22 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
+    async respondQuestion(requestId, answers = {}, cancelled = false) {
+      const request = this.questionRequests.find((item) => item.requestId === requestId)
+      if (!request || request.responding) return
+      request.responding = true
+      try {
+        await desktop.respondClaudeQuestion(
+          request.conversationId, request.runId, request.requestId, answers, cancelled,
+        )
+        this.questionRequests = this.questionRequests.filter((item) => item.requestId !== requestId)
+      } catch (error) {
+        // The backend consumes a control request before writing its response, so it cannot be retried safely.
+        this.questionRequests = this.questionRequests.filter((item) => item.requestId !== requestId)
+        this.error = String(error)
+      }
+    },
+
     handleClaudeEvent(payload) {
       const run = this.runs[payload.conversationId]
       if (!run || (run.runId && run.runId !== payload.runId)) return
@@ -553,6 +573,18 @@ export const useWorkspaceStore = defineStore('workspace', {
         const request = normalizePermissionRequest(payload.data, payload.conversationId, payload.runId)
         if (request && !this.permissionRequests.some((item) => item.requestId === request.requestId)) {
           this.permissionRequests.push(request)
+        }
+        return
+      }
+      if (payload.kind === 'question') {
+        const request = normalizeQuestionRequest(payload.data, payload.conversationId, payload.runId)
+        if (request && !this.questionRequests.some((item) => item.requestId === request.requestId)) {
+          this.questionRequests.push(request)
+        } else if (!request && payload.data?.requestId) {
+          // Never leave Claude blocked if a future or malformed question cannot be rendered safely.
+          desktop.respondClaudeQuestion(
+            payload.conversationId, payload.runId, payload.data.requestId, {}, true,
+          ).catch((error) => { this.error = String(error) })
         }
         return
       }
@@ -575,6 +607,8 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (event.type === 'full-text' && !run.sawPartialText && !run.content) run.content = event.text
           if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
           if (event.type === 'result') {
+            run.receivedResult = true
+            run.resultValueType = event.valueType
             if (!run.content && event.text) run.content = event.text
             if (event.cumulativeTokens) run.context.cumulativeTokens = event.cumulativeTokens
             if (event.contextWindow) run.context.window = event.contextWindow
@@ -591,10 +625,18 @@ export const useWorkspaceStore = defineStore('workspace', {
         else if (!payload.data?.success && run.status !== 'stopping' && run.status !== 'error') {
           run.status = 'error'
           run.error ||= 'Claude exited before completing the response.'
+          run.diagnosticKind = 'run-error'
+        } else if (payload.data?.success && run.operation === 'chat' && !run.content.trim() && run.status !== 'stopping' && run.status !== 'error') {
+          // A zero-exit process without answer text is not a successful product response.
+          // Keep queued follow-ups paused so the user can inspect or retry deliberately.
+          run.status = 'error'
+          run.error = 'Claude returned no response text.'
+          run.diagnosticKind = 'empty-response'
         } else if (run.status !== 'error') {
           run.status = run.status === 'stopping' ? 'stopped' : 'complete'
           shouldContinue = run.status === 'complete'
         }
+        if (run.status === 'error' && !run.diagnosticKind) run.diagnosticKind = 'run-error'
         if (run.status === 'interrupted') shouldContinue = true
         this.finishRun(payload.conversationId, shouldContinue)
       }
@@ -603,6 +645,9 @@ export const useWorkspaceStore = defineStore('workspace', {
     async finishRun(conversationId, shouldContinue) {
       const runId = this.runs[conversationId]?.runId
       this.permissionRequests = this.permissionRequests.filter((request) => (
+        request.conversationId !== conversationId || request.runId !== runId
+      ))
+      this.questionRequests = this.questionRequests.filter((request) => (
         request.conversationId !== conversationId || request.runId !== runId
       ))
       await this.finalizeRun(conversationId)
@@ -634,6 +679,15 @@ export const useWorkspaceStore = defineStore('workspace', {
             ;(this.messages[conversationId] ||= []).push(message)
             run.content = ''
           } catch (error) { run.error = String(error) }
+        }
+        if (run.status === 'error' && run.diagnosticKind && run.runId) {
+          const content = diagnosticMessage(run.diagnosticKind, run.runId)
+          if (content) {
+            try {
+              const message = await desktop.saveMessage(conversationId, 'system', content)
+              ;(this.messages[conversationId] ||= []).push(message)
+            } catch (error) { run.error = String(error) }
+          }
         }
       }
       await this.refreshChanges()

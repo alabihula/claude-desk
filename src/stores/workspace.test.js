@@ -8,6 +8,7 @@ vi.mock('../services/desktop', () => ({
     linkAttachments: vi.fn(),
     sendClaude: vi.fn(),
     respondClaudePermission: vi.fn(),
+    respondClaudeQuestion: vi.fn(),
     interruptClaude: vi.fn(),
     stopClaude: vi.fn(),
     removeProject: vi.fn(),
@@ -71,6 +72,7 @@ describe('workspace supplemental messages', () => {
     desktop.sendClaude.mockResolvedValue('run-next')
     desktop.interruptClaude.mockResolvedValue()
     desktop.respondClaudePermission.mockResolvedValue()
+    desktop.respondClaudeQuestion.mockResolvedValue()
     desktop.createConversation.mockResolvedValue({ id: 'conversation-new', projectId: 'project-1', title: 'New conversation' })
     desktop.listConversations.mockResolvedValue([])
     desktop.listMessages.mockResolvedValue([])
@@ -122,14 +124,6 @@ describe('workspace supplemental messages', () => {
     delete store.runs['conversation-1']
     await store.dispatchNextQueued('conversation-1')
     expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet[1m]', effort: 'high' }))
-  })
-
-  it('sends the built-in MCP command without appending normal prompt guidance', async () => {
-    const store = setupStore()
-
-    await store.sendMessage('/mcp')
-
-    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ prompt: '/mcp' }))
   })
 
   it('prioritizes the selected supplement and interrupts the current run', async () => {
@@ -203,6 +197,45 @@ describe('workspace supplemental messages', () => {
     store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: true } })
     await vi.waitFor(() => expect(store.activeRun).toBeNull())
     expect(store.activeMessages.at(-1)).toMatchObject({ role: 'assistant', content: '已完成' })
+  })
+
+  it('persists a diagnostic event and pauses queued work when Claude exits successfully without text', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    await store.sendMessage('等本次回答后继续')
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: { type: 'result', result: null, is_error: false },
+    })
+    expect(store.activeRun).toMatchObject({ status: 'finishing', receivedResult: true, resultValueType: 'null' })
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: true, code: 0 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(store.activeMessages.at(-1)).toMatchObject({
+      role: 'system',
+      content: 'claude-desk:diagnostic:empty-response:run-current',
+    })
+    expect(desktop.sendClaude).not.toHaveBeenCalled()
+  })
+
+  it('persists a diagnostic event when the Claude process exits with an error', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: false, code: 1 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeMessages.at(-1)).toMatchObject({
+      role: 'system',
+      content: 'claude-desk:diagnostic:run-error:run-current',
+    })
   })
 
   it('uses transcript-backed context usage when the provider stream reports zero usage', () => {
@@ -531,5 +564,51 @@ describe('workspace supplemental messages', () => {
     expect(store.permissionRequests.map((request) => request.requestId)).toEqual(['permission-1'])
     await store.finishRun('conversation-1', false)
     expect(store.permissionRequests).toEqual([])
+  })
+
+  it('queues a structured Claude question and returns answers to the same run', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1',
+      runId: 'run-current',
+      kind: 'question',
+      data: {
+        requestId: 'question-1',
+        toolName: 'AskUserQuestion',
+        input: {
+          questions: [{
+            question: 'Which framework?',
+            header: 'Framework',
+            options: [{ label: 'Vue' }, { label: 'React' }],
+            multiSelect: false,
+          }],
+        },
+      },
+    })
+
+    expect(store.activeQuestionRequest).toMatchObject({
+      requestId: 'question-1',
+      questions: [{ prompt: 'Which framework?' }],
+    })
+    await store.respondQuestion('question-1', { 'Which framework?': 'Vue' })
+    expect(desktop.respondClaudeQuestion).toHaveBeenCalledWith(
+      'conversation-1', 'run-current', 'question-1', { 'Which framework?': 'Vue' }, false,
+    )
+    expect(store.activeQuestionRequest).toBeNull()
+  })
+
+  it('denies malformed question events instead of leaving Claude blocked', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'question',
+      data: { requestId: 'question-invalid', toolName: 'AskUserQuestion', input: { questions: [] } },
+    })
+
+    expect(store.activeQuestionRequest).toBeNull()
+    expect(desktop.respondClaudeQuestion).toHaveBeenCalledWith(
+      'conversation-1', 'run-current', 'question-invalid', {}, true,
+    )
   })
 })

@@ -13,6 +13,7 @@ vi.mock('../../services/desktop', () => ({
   desktop: {
     copyAttachment: vi.fn(),
     listClaudeSkills: vi.fn(),
+    listMcpServers: vi.fn(),
     saveClipboardImage: vi.fn(),
   },
 }))
@@ -41,6 +42,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   desktop.listClaudeSkills.mockResolvedValue([])
+  desktop.listMcpServers.mockResolvedValue([])
   desktop.copyAttachment.mockImplementation(async (conversationId, path) => ({
     id: `${conversationId}:${path}`,
     conversationId,
@@ -297,7 +299,7 @@ describe('ChatComposer attachments', () => {
     )
   })
 
-  it('offers the built-in MCP status command in the slash menu', async () => {
+  it('opens the local MCP server panel from the slash menu without sending a message', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const store = useWorkspaceStore()
@@ -306,6 +308,9 @@ describe('ChatComposer attachments', () => {
     store.activeProjectId = 'project-1'
     store.activeConversationId = 'conversation-1'
     store.sendMessage = vi.fn()
+    desktop.listMcpServers.mockResolvedValue([{
+      name: 'filesystem', detail: 'node server.js /tmp', status: 'connected', message: '',
+    }])
     desktop.listClaudeSkills.mockResolvedValue([{
       name: 'aliyun-observability',
       description: 'Configure an MCP endpoint',
@@ -327,12 +332,109 @@ describe('ChatComposer attachments', () => {
     expect(option?.textContent).toContain('/mcp')
     expect(option?.textContent).toContain('configured MCP servers')
     option.click()
-    await nextTick()
-    expect(textarea.value).toBe('/mcp ')
+    await flushPromises()
 
+    expect(textarea.value).toBe('')
+    expect(desktop.listMcpServers).toHaveBeenCalledWith('/tmp/project', 'claude', {})
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('filesystem')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Connected')
+    expect(store.sendMessage).not.toHaveBeenCalled()
+
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await nextTick()
+    expect(root.querySelector('.mcp-server-panel')).toBeNull()
+  })
+
+  it('opens the MCP panel for a manually entered exact command and renders the empty state', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    store.sendMessage = vi.fn()
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    await nextTick()
     textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
     await flushPromises()
-    expect(store.sendMessage).toHaveBeenCalledWith('/mcp ', [], null, [])
+
+    expect(root.querySelector('.mcp-panel-state')?.textContent).toContain('No MCP servers configured')
+    expect(store.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('shows an MCP load error and retries', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    store.sendMessage = vi.fn()
+    desktop.listMcpServers.mockRejectedValueOnce(new Error('status unavailable')).mockResolvedValueOnce([])
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await flushPromises()
+    expect(root.querySelector('.mcp-panel-state.error')?.textContent).toContain('status unavailable')
+
+    root.querySelector('.mcp-panel-state.error button').click()
+    await flushPromises()
+    expect(desktop.listMcpServers).toHaveBeenCalledTimes(2)
+    expect(root.querySelector('.mcp-panel-state')?.textContent).toContain('No MCP servers configured')
+  })
+
+  it('does not duplicate an in-flight MCP check when the panel is closed and reopened', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    let finishList
+    desktop.listMcpServers.mockReturnValue(new Promise((resolve) => { finishList = resolve }))
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    await nextTick()
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await nextTick()
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await nextTick()
+
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    await nextTick()
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await nextTick()
+    expect(desktop.listMcpServers).toHaveBeenCalledTimes(1)
+
+    finishList([])
+    await flushPromises()
+    expect(root.querySelector('.mcp-panel-state')?.textContent).toContain('No MCP servers configured')
   })
 
   it('shows selected code as a compact capsule and sends the structured fragments', async () => {

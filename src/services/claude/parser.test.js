@@ -40,8 +40,9 @@ describe('parseClaudeEvent', () => {
   })
 
   it('recognizes successful and failed terminal results', () => {
-    expect(parseClaudeEvent({ type: 'result', result: 'Done', is_error: false })[0]).toMatchObject({ type: 'result', text: 'Done', error: false })
+    expect(parseClaudeEvent({ type: 'result', result: 'Done', is_error: false })[0]).toMatchObject({ type: 'result', text: 'Done', valueType: 'string', error: false })
     expect(parseClaudeEvent({ type: 'result', result: 'Failed', is_error: true })[0]).toMatchObject({ type: 'result', error: true })
+    expect(parseClaudeEvent({ type: 'result', result: null, is_error: false })[0]).toMatchObject({ text: '', valueType: 'null' })
   })
 
   it('surfaces permission denials for an actionable UI', () => {

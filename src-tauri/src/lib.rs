@@ -2,8 +2,10 @@ mod claude;
 mod config;
 mod context;
 mod data;
+mod diagnostics;
 mod files;
 mod git;
+mod mcp;
 mod platform;
 mod runtime;
 mod skills;
@@ -52,6 +54,7 @@ pub fn run() {
             data::link_attachments,
             data::load_settings,
             data::save_settings,
+            diagnostics::export_run_diagnostic,
             config::load_claude_settings,
             config::save_claude_settings,
             files::copy_attachment,
@@ -69,10 +72,12 @@ pub fn run() {
             git::git_environment,
             git::git_diff,
             git::git_commit,
+            mcp::list_mcp_servers,
             skills::list_claude_skills,
             claude::check_claude,
             claude::send_claude,
             claude::respond_claude_permission,
+            claude::respond_claude_question,
             claude::interrupt_claude,
             claude::stop_claude,
         ])

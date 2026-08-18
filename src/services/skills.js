@@ -33,11 +33,6 @@ export function selectedSkillInput(skill) {
   }
 }
 
-export function standaloneClaudeCommand(content) {
-  const command = String(content || '').trim()
-  return command === '/mcp' ? command : null
-}
-
 export function externalSkillPrompt(content, skill) {
   if (!skill?.path) return content
   const request = content.trim().replace(new RegExp(`^/${escapeRegExp(skill.name)}(?:\\s+|$)`), '').trim()

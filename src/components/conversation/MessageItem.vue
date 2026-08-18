@@ -4,13 +4,14 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { downloadDir, join } from '@tauri-apps/api/path'
 import { save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Check, Copy, Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
+import { AlertTriangle, Check, Copy, Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
 import { desktop } from '../../services/desktop'
 import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from '../../services/localFiles'
 import { codeCopyPayload, createMessageMarkdown, externalHttpUrl, writeClipboardText } from '../../services/markdown'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useI18n } from '../../services/i18n'
 import CodeSnippetCapsule from '../common/CodeSnippetCapsule.vue'
+import { parseDiagnosticMessage } from '../../services/claude/diagnostics'
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -23,6 +24,7 @@ const downloadTimers = new Map()
 const downloadableFiles = ref([])
 const downloadStatus = ref({})
 const messageCopied = ref(false)
+const diagnosticStatus = ref('idle')
 let fileRequestId = 0
 let messageCopyTimer
 const rendered = computed(() => {
@@ -33,6 +35,7 @@ const rendered = computed(() => {
   }
   return createMessageMarkdown({ code: t('message.code'), copy: t('message.copy'), copyAria: t('message.copyCode') }).render(content.trim())
 })
+const diagnostic = computed(() => props.message.role === 'system' ? parseDiagnosticMessage(props.message.content) : null)
 const fileRefs = computed(() => {
   return extractProjectFileReferences(props.message.content)
 })
@@ -125,6 +128,23 @@ async function downloadLocalFile(file) {
   }
 }
 
+async function exportDiagnostic() {
+  if (!diagnostic.value || diagnosticStatus.value === 'saving') return
+  try {
+    const destination = await save({
+      title: t('diagnostic.exportTitle'),
+      defaultPath: `claude-desk-diagnostic-${diagnostic.value.runId}.json`,
+    })
+    if (!destination) return
+    diagnosticStatus.value = 'saving'
+    await desktop.exportRunDiagnostic(props.message.conversationId, diagnostic.value.runId, destination)
+    diagnosticStatus.value = 'saved'
+  } catch (error) {
+    diagnosticStatus.value = 'idle'
+    store.error = String(error)
+  }
+}
+
 onBeforeUnmount(() => {
   for (const timer of copyTimers.values()) window.clearTimeout(timer)
   for (const timer of downloadTimers.values()) window.clearTimeout(timer)
@@ -133,7 +153,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article v-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
+  <article v-if="diagnostic" class="diagnostic-event" role="status">
+    <AlertTriangle :size="17" />
+    <div><strong>{{ t(diagnostic.kind === 'empty-response' ? 'diagnostic.emptyTitle' : 'diagnostic.errorTitle') }}</strong><span>{{ t(diagnostic.kind === 'empty-response' ? 'diagnostic.emptyBody' : 'diagnostic.errorBody') }}</span></div>
+    <button :disabled="diagnosticStatus === 'saving'" @click="exportDiagnostic"><Download :size="14" />{{ t(diagnosticStatus === 'saving' ? 'diagnostic.exporting' : diagnosticStatus === 'saved' ? 'diagnostic.exported' : 'diagnostic.export') }}</button>
+  </article>
+  <article v-else-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
   <article v-else class="message" :class="`message-${message.role}`">
     <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>
     <CodeSnippetCapsule v-if="message.role === 'user'" :snippets="message.snippets || []" />

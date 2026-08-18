@@ -7,11 +7,13 @@ import { attachmentTypeLabel, clipboardImageFromEvent, copyAttachmentPaths } fro
 import { shouldSubmitComposer } from '../../services/composerKeyboard'
 import { resizeComposerTextarea } from '../../services/composerTextarea'
 import { matchingSkills, selectedSkillInput, slashSkillQuery } from '../../services/skills'
+import { useCloseOnOutsidePointerDown } from '../../services/clickOutside'
 import { desktop } from '../../services/desktop'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { configuredModel } from '../../services/claude/settings'
 import ComposerRuntimeControls from './ComposerRuntimeControls.vue'
 import ContextMeter from './ContextMeter.vue'
+import McpServerPanel from './McpServerPanel.vue'
 import CodeSnippetCapsule from '../common/CodeSnippetCapsule.vue'
 import QueuedMessages from './QueuedMessages.vue'
 import SlashSkillMenu from './SlashSkillMenu.vue'
@@ -41,6 +43,12 @@ const selectedSkill = computed({
 })
 const skillIndex = ref(0)
 const skillMenuDismissed = ref(false)
+const mcpPanelRoot = ref(null)
+const mcpPanelOpen = ref(false)
+const mcpServers = ref([])
+const mcpLoading = ref(false)
+const mcpError = ref('')
+let mcpRequestId = 0
 const skillQuery = computed(() => slashSkillQuery(text.value))
 const builtInCommands = computed(() => [{
   name: 'mcp',
@@ -53,7 +61,7 @@ const slashItems = computed(() => [
   ...skills.value.filter((skill) => skill.name !== 'mcp'),
 ])
 const visibleSkills = computed(() => matchingSkills(slashItems.value, skillQuery.value))
-const skillMenuOpen = computed(() => skillQuery.value !== null && !skillMenuDismissed.value && visibleSkills.value.length > 0)
+const skillMenuOpen = computed(() => !mcpPanelOpen.value && skillQuery.value !== null && !skillMenuDismissed.value && visibleSkills.value.length > 0)
 
 async function addPaths(paths, conversationId = store.activeConversationId) {
   if (!conversationId || !paths?.length) return
@@ -106,6 +114,10 @@ function removeAttachment(attachmentId) {
 
 async function send() {
   if (!text.value.trim() && !attachments.value.length && !snippets.value.length) return
+  if (text.value.trim() === '/mcp') {
+    openMcpPanel()
+    return
+  }
   const conversationId = store.activeConversationId
   const outgoing = [...attachments.value]
   const outgoingSnippets = snippets.value
@@ -121,6 +133,11 @@ async function send() {
 
 function keydown(event) {
   if (handleSkillKeydown(event)) return
+  if (mcpPanelOpen.value && event.key === 'Escape') {
+    event.preventDefault()
+    closeMcpPanel()
+    return
+  }
   if (shouldSubmitComposer(event, composition)) { event.preventDefault(); send() }
 }
 
@@ -151,12 +168,51 @@ function handleSkillKeydown(event) {
 
 function chooseSkill(skill) {
   if (!skill) return
+  if (skill.name === 'mcp' && skill.scope === 'builtIn') {
+    openMcpPanel()
+    return
+  }
   const selected = selectedSkillInput(skill)
   text.value = selected.text
   selectedSkill.value = selected.skill
   skillIndex.value = 0
   nextTick(focus)
 }
+
+async function loadMcpServers() {
+  const projectPath = store.activeProject?.path
+  if (!projectPath || mcpLoading.value) return
+  const requestId = ++mcpRequestId
+  mcpLoading.value = true
+  mcpError.value = ''
+  try {
+    const servers = await desktop.listMcpServers(projectPath, store.settings.command, store.settings.env)
+    if (requestId === mcpRequestId && store.activeProject?.path === projectPath) mcpServers.value = servers
+  } catch (error) {
+    if (requestId === mcpRequestId) {
+      mcpServers.value = []
+      mcpError.value = String(error)
+    }
+  } finally {
+    if (requestId === mcpRequestId) mcpLoading.value = false
+  }
+}
+
+function openMcpPanel() {
+  text.value = ''
+  selectedSkill.value = null
+  skillMenuDismissed.value = true
+  mcpPanelOpen.value = true
+  loadMcpServers()
+}
+
+function closeMcpPanel() {
+  if (!mcpPanelOpen.value) return
+  mcpPanelOpen.value = false
+  nextTick(focus)
+}
+
+useCloseOnOutsidePointerDown(mcpPanelRoot, closeMcpPanel)
 
 function compositionStart() { composition.composing = true }
 function compositionEnd() {
@@ -201,7 +257,14 @@ watch(activeConversationId, (next, previous) => {
   text.value = next ? store.drafts[next] || '' : ''
   nextTick(resizeInput)
 }, { immediate: true })
-watch(() => store.activeProject?.path, loadSkills, { immediate: true })
+watch(() => store.activeProject?.path, () => {
+  mcpRequestId += 1
+  mcpLoading.value = false
+  mcpServers.value = []
+  mcpError.value = ''
+  closeMcpPanel()
+  loadSkills()
+}, { immediate: true })
 onMounted(() => {
   window.addEventListener('claude-desk-drop', dropped)
   window.addEventListener('claude-desk-focus', focus)
@@ -247,6 +310,15 @@ onBeforeUnmount(() => {
         <CodeSnippetCapsule :snippets="snippets" removable @clear="store.clearSnippetDrafts(activeConversationId)" />
       </div>
       <SlashSkillMenu :skills="skillMenuOpen ? visibleSkills : []" :active-index="skillIndex" @select="chooseSkill" />
+      <div v-if="mcpPanelOpen" ref="mcpPanelRoot" class="mcp-panel-anchor">
+        <McpServerPanel
+          :servers="mcpServers"
+          :loading="mcpLoading"
+          :error="mcpError"
+          @refresh="loadMcpServers"
+          @close="closeMcpPanel"
+        />
+      </div>
       <textarea
         ref="input"
         v-model="text"

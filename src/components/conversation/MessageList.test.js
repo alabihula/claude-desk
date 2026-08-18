@@ -7,8 +7,9 @@ vi.mock('@tauri-apps/api/core', () => ({ convertFileSrc: (path) => `asset:${path
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 vi.mock('@tauri-apps/api/path', () => ({ downloadDir: vi.fn(), join: vi.fn() }))
-vi.mock('../../services/desktop', () => ({ desktop: { resolveLocalFiles: vi.fn().mockResolvedValue([]) } }))
+vi.mock('../../services/desktop', () => ({ desktop: { resolveLocalFiles: vi.fn().mockResolvedValue([]), exportRunDiagnostic: vi.fn().mockResolvedValue() } }))
 import { desktop } from '../../services/desktop'
+import { save } from '@tauri-apps/plugin-dialog'
 import { useWorkspaceStore } from '../../stores/workspace'
 import MessageList from './MessageList.vue'
 
@@ -162,5 +163,31 @@ describe('MessageList stream following', () => {
     expect(desktop.resolveLocalFiles).toHaveBeenCalledWith('/project', ['./exports/report.xlsx'])
     expect(root.querySelectorAll('.download-file-card')).toHaveLength(1)
     expect(root.querySelector('.download-file-card')?.textContent).toContain('report.xlsx')
+  })
+
+  it('renders an empty-response diagnostic and exports the matching privacy-safe record', async () => {
+    save.mockResolvedValue('/tmp/diagnostic.json')
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({
+      render: () => h(MessageList, {
+        conversationId: 'conversation-1',
+        messages: [{
+          id: 'diagnostic-1', conversationId: 'conversation-1', role: 'system',
+          content: 'claude-desk:diagnostic:empty-response:run-123',
+        }],
+        attachmentsByMessage: {},
+      }),
+    })
+    app.use(createPinia())
+    app.mount(root)
+    await nextTick()
+
+    expect(root.querySelector('.diagnostic-event')?.textContent).toContain('Claude returned no response text')
+    root.querySelector('.diagnostic-event button').click()
+
+    await vi.waitFor(() => expect(desktop.exportRunDiagnostic).toHaveBeenCalledWith(
+      'conversation-1', 'run-123', '/tmp/diagnostic.json',
+    ))
   })
 })

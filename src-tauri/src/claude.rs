@@ -1,4 +1,4 @@
-use crate::{context, data, platform, runtime, skills};
+use crate::{context, data, diagnostics, platform, runtime, skills};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,6 +33,13 @@ struct RunningProcess {
 struct PendingPermission {
     input: Value,
     tool_name: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ControlRequestDisposition {
+    Question,
+    AutoApprove,
+    Prompt,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -222,6 +229,19 @@ fn permission_request(payload: &Value) -> Option<(String, PendingPermission, Val
     Some((request_id, PendingPermission { input, tool_name }, event))
 }
 
+fn control_request_disposition(
+    request: &PendingPermission,
+    auto_approve_tools: bool,
+) -> ControlRequestDisposition {
+    if request.tool_name == "AskUserQuestion" {
+        ControlRequestDisposition::Question
+    } else if auto_approve_tools {
+        ControlRequestDisposition::AutoApprove
+    } else {
+        ControlRequestDisposition::Prompt
+    }
+}
+
 fn mcp_server_rule(tool_name: &str) -> Option<String> {
     let (server, action) = tool_name.strip_prefix("mcp__")?.split_once("__")?;
     (!server.is_empty() && !action.is_empty()).then(|| format!("mcp__{server}__*"))
@@ -275,6 +295,66 @@ fn permission_response(
             response["updatedPermissions"] = serde_json::json!([update]);
         }
         response
+    };
+    Ok(serde_json::json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": request_id,
+            "response": response,
+        }
+    }))
+}
+
+fn question_response(
+    request_id: &str,
+    request: &PendingPermission,
+    answers: HashMap<String, String>,
+    cancelled: bool,
+) -> Result<Value, String> {
+    if request.tool_name != "AskUserQuestion" {
+        return Err("This request is not a Claude question".into());
+    }
+    let response = if cancelled {
+        serde_json::json!({
+            "behavior": "deny",
+            "message": "The user chose not to answer this question in Claude Desk.",
+            "interrupt": false,
+        })
+    } else {
+        let questions = request
+            .input
+            .get("questions")
+            .and_then(Value::as_array)
+            .ok_or("Claude sent an invalid question request")?;
+        if questions.is_empty() || questions.len() > 4 {
+            return Err("Claude sent an unsupported number of questions".into());
+        }
+        for question in questions {
+            let prompt = question
+                .get("question")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or("Claude sent a question without prompt text")?;
+            if answers
+                .get(prompt)
+                .is_none_or(|answer| answer.trim().is_empty())
+            {
+                return Err("Every Claude question requires an answer".into());
+            }
+        }
+        let mut updated_input = request.input.clone();
+        let input = updated_input
+            .as_object_mut()
+            .ok_or("Claude sent an invalid question input")?;
+        input.insert(
+            "answers".into(),
+            serde_json::to_value(answers).map_err(|error| error.to_string())?,
+        );
+        serde_json::json!({
+            "behavior": "allow",
+            "updatedInput": updated_input,
+        })
     };
     Ok(serde_json::json!({
         "type": "control_response",
@@ -386,11 +466,16 @@ pub async fn send_claude(
         .join("attachments");
     fs::create_dir_all(&attachment_root).map_err(|error| error.to_string())?;
     command.arg("--add-dir").arg(attachment_root);
-    if permission_mode == "bypassPermissions" {
-        command.arg("--dangerously-skip-permissions");
+    // Claude's native bypass mode also auto-answers AskUserQuestion with the
+    // first option. Keep the callback channel active and auto-approve only
+    // ordinary tool requests so product questions still reach the user.
+    let auto_approve_tools = permission_mode == "bypassPermissions";
+    let effective_permission_mode = if auto_approve_tools {
+        "acceptEdits"
     } else {
-        command.args(["--permission-mode", permission_mode]);
-    }
+        permission_mode
+    };
+    command.args(["--permission-mode", effective_permission_mode]);
     if request.resume {
         command.args(["--resume", &request.session_id]);
     } else {
@@ -411,6 +496,18 @@ pub async fn send_claude(
         .id()
         .ok_or("Claude process did not expose a process id")?;
     let run_id = Uuid::new_v4().to_string();
+    let mut run_diagnostics = diagnostics::RunDiagnostics::new(
+        &app,
+        diagnostics::RunContext {
+            conversation_id: &request.conversation_id,
+            run_id: &run_id,
+            session_id: &request.session_id,
+            resumed: request.resume,
+            model: model.clone(),
+            effort: effort.clone(),
+            permission_mode,
+        },
+    );
     let input = Arc::new(AsyncMutex::new(Some(
         child.stdin.take().ok_or("Claude stdin is unavailable")?,
     )));
@@ -475,12 +572,34 @@ pub async fn send_claude(
             tokio::select! {
                 line = stdout_lines.next_line(), if !stdout_done => match line {
                     Ok(Some(line)) => {
-                        let payload = serde_json::from_str(&line).unwrap_or_else(|_| serde_json::json!({ "text": line }));
+                        let parsed = serde_json::from_str(&line);
+                        let valid_json = parsed.is_ok();
+                        let payload = parsed.unwrap_or_else(|_| serde_json::json!({ "text": line }));
+                        run_diagnostics.observe_stdout(&line, &payload, valid_json);
                         if let Some((request_id, permission, event)) = permission_request(&payload) {
+                            let disposition = control_request_disposition(&permission, auto_approve_tools);
+                            if disposition == ControlRequestDisposition::AutoApprove {
+                                match permission_response(&request_id, &permission, PermissionDecision::AllowOnce) {
+                                    Ok(response) => {
+                                        if let Err(error) = write_input(&input_for_task, &response).await {
+                                            emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error }));
+                                            close_input(&input_for_task).await;
+                                        }
+                                    }
+                                    Err(error) => emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error })),
+                                }
+                                continue;
+                            }
                             if let Ok(mut pending) = permissions_for_task.lock() {
                                 pending.insert(request_id, permission);
                             }
-                            emit(&app_for_task, &conversation_id, &run_for_task, "permission", event);
+                            emit(
+                                &app_for_task,
+                                &conversation_id,
+                                &run_for_task,
+                                if disposition == ControlRequestDisposition::Question { "question" } else { "permission" },
+                                event,
+                            );
                             continue;
                         }
                         let is_result = payload.get("type").and_then(Value::as_str) == Some("result");
@@ -501,7 +620,10 @@ pub async fn send_claude(
                     Err(error) => { stdout_done = true; emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error.to_string() })); }
                 },
                 line = stderr_lines.next_line(), if !stderr_done => match line {
-                    Ok(Some(line)) => emit(&app_for_task, &conversation_id, &run_for_task, "stderr", serde_json::json!({ "message": line })),
+                    Ok(Some(line)) => {
+                        run_diagnostics.observe_stderr(&line);
+                        emit(&app_for_task, &conversation_id, &run_for_task, "stderr", serde_json::json!({ "message": line }));
+                    }
                     Ok(None) => stderr_done = true,
                     Err(error) => { stderr_done = true; emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error.to_string() })); }
                 }
@@ -557,20 +679,35 @@ pub async fn send_claude(
             }
         }
         match status {
-            Ok(status) => emit(
-                &app_for_task,
-                &conversation_id,
-                &run_for_task,
-                "exit",
-                serde_json::json!({ "success": status.success(), "code": status.code() }),
-            ),
-            Err(error) => emit(
-                &app_for_task,
-                &conversation_id,
-                &run_for_task,
-                "error",
-                serde_json::json!({ "message": error.to_string() }),
-            ),
+            Ok(status) => {
+                run_diagnostics.finish(status.success(), status.code(), None);
+                let _ = diagnostics::save(&app_for_task, &run_diagnostics);
+                emit(
+                    &app_for_task,
+                    &conversation_id,
+                    &run_for_task,
+                    "exit",
+                    serde_json::json!({ "success": status.success(), "code": status.code() }),
+                );
+            }
+            Err(error) => {
+                run_diagnostics.finish(false, None, Some(&error.to_string()));
+                let _ = diagnostics::save(&app_for_task, &run_diagnostics);
+                emit(
+                    &app_for_task,
+                    &conversation_id,
+                    &run_for_task,
+                    "error",
+                    serde_json::json!({ "message": error.to_string() }),
+                );
+                emit(
+                    &app_for_task,
+                    &conversation_id,
+                    &run_for_task,
+                    "exit",
+                    serde_json::json!({ "success": false, "code": null }),
+                );
+            }
         }
     });
     Ok(run_id)
@@ -598,12 +735,62 @@ pub async fn respond_claude_permission(
         (process.input.clone(), process.pending_permissions.clone())
     };
     // Taking the request before the async write makes repeated button clicks idempotent.
-    let permission = pending_permissions
-        .lock()
-        .map_err(|_| "Claude permission state is unavailable")?
-        .remove(&request_id)
-        .ok_or("This permission request is no longer pending")?;
+    let permission = {
+        let mut pending = pending_permissions
+            .lock()
+            .map_err(|_| "Claude permission state is unavailable")?;
+        let permission = pending
+            .get(&request_id)
+            .ok_or("This permission request is no longer pending")?;
+        if permission.tool_name == "AskUserQuestion" {
+            return Err("Claude questions require a structured answer".into());
+        }
+        pending
+            .remove(&request_id)
+            .expect("pending request disappeared")
+    };
     let response = permission_response(&request_id, &permission, decision)?;
+    write_input(&input, &response).await
+}
+
+#[tauri::command]
+pub async fn respond_claude_question(
+    state: State<'_, ClaudeProcesses>,
+    conversation_id: String,
+    run_id: String,
+    request_id: String,
+    answers: HashMap<String, String>,
+    cancelled: bool,
+) -> Result<(), String> {
+    let (input, pending_permissions) = {
+        let running = state
+            .running
+            .lock()
+            .map_err(|_| "Claude process state is unavailable")?;
+        let process = running
+            .get(&conversation_id)
+            .ok_or("Claude is no longer waiting for this answer")?;
+        if process.run_id != run_id {
+            return Err("This question belongs to an older Claude run".into());
+        }
+        (process.input.clone(), process.pending_permissions.clone())
+    };
+    let response = {
+        let mut pending = pending_permissions
+            .lock()
+            .map_err(|_| "Claude question state is unavailable")?;
+        let request = pending
+            .get(&request_id)
+            .ok_or("This question is no longer pending")?;
+        if request.tool_name != "AskUserQuestion" {
+            return Err("This request requires a permission decision".into());
+        }
+        let response = question_response(&request_id, request, answers, cancelled)?;
+        pending
+            .remove(&request_id)
+            .expect("pending question disappeared");
+        response
+    };
     write_input(&input, &response).await
 }
 
@@ -650,8 +837,12 @@ pub fn stop_claude(
 
 #[cfg(test)]
 mod tests {
-    use super::{permission_request, permission_response, PendingPermission, PermissionDecision};
+    use super::{
+        control_request_disposition, permission_request, permission_response, question_response,
+        ControlRequestDisposition, PendingPermission, PermissionDecision,
+    };
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn extracts_tool_permission_requests_for_the_product_ui() {
@@ -677,6 +868,30 @@ mod tests {
     }
 
     #[test]
+    fn preserves_questions_while_auto_approving_full_access_tools() {
+        let question = PendingPermission {
+            tool_name: "AskUserQuestion".into(),
+            input: json!({}),
+        };
+        let command = PendingPermission {
+            tool_name: "Bash".into(),
+            input: json!({}),
+        };
+        assert_eq!(
+            control_request_disposition(&question, true),
+            ControlRequestDisposition::Question
+        );
+        assert_eq!(
+            control_request_disposition(&command, true),
+            ControlRequestDisposition::AutoApprove
+        );
+        assert_eq!(
+            control_request_disposition(&command, false),
+            ControlRequestDisposition::Prompt
+        );
+    }
+
+    #[test]
     fn builds_allow_and_deny_control_responses() {
         let (_, permission, _) = permission_request(&json!({
             "type": "control_request",
@@ -696,6 +911,49 @@ mod tests {
             permission_response("permission-1", &permission, PermissionDecision::Deny).unwrap();
         assert_eq!(deny["response"]["response"]["behavior"], "deny");
         assert_eq!(deny["response"]["response"]["interrupt"], false);
+    }
+
+    #[test]
+    fn builds_structured_question_answers_and_cancellation() {
+        let (_, request, _) = permission_request(&json!({
+            "type": "control_request",
+            "request_id": "question-1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "AskUserQuestion",
+                "input": {
+                    "questions": [{
+                        "question": "Which framework?",
+                        "header": "Framework",
+                        "options": [
+                            { "label": "Vue", "description": "Use Vue" },
+                            { "label": "React", "description": "Use React" }
+                        ],
+                        "multiSelect": false
+                    }]
+                }
+            }
+        }))
+        .unwrap();
+        let answers = HashMap::from([("Which framework?".into(), "Vue".into())]);
+        let answered = question_response("question-1", &request, answers, false).unwrap();
+        assert_eq!(
+            answered["response"]["response"]["updatedInput"]["answers"]["Which framework?"],
+            "Vue"
+        );
+
+        let cancelled = question_response("question-1", &request, HashMap::new(), true).unwrap();
+        assert_eq!(cancelled["response"]["response"]["behavior"], "deny");
+        assert_eq!(cancelled["response"]["response"]["interrupt"], false);
+    }
+
+    #[test]
+    fn rejects_incomplete_structured_question_answers() {
+        let request = PendingPermission {
+            tool_name: "AskUserQuestion".into(),
+            input: json!({ "questions": [{ "question": "Choose one" }] }),
+        };
+        assert!(question_response("question-1", &request, HashMap::new(), false).is_err());
     }
 
     #[test]

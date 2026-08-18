@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { externalSkillPrompt, matchingSkills, selectedSkillInput, slashSkillQuery, standaloneClaudeCommand } from './skills'
+import { externalSkillPrompt, matchingSkills, selectedSkillInput, slashSkillQuery } from './skills'
 
 describe('slash skills', () => {
   it('opens only for a standalone slash command prefix', () => {
@@ -50,9 +50,4 @@ describe('slash skills', () => {
     expect(prompt).not.toContain('/superpowers:brainstorm 设计一个方案')
   })
 
-  it('keeps the built-in MCP command isolated from normal prompt guidance', () => {
-    expect(standaloneClaudeCommand('/mcp ')).toBe('/mcp')
-    expect(standaloneClaudeCommand('/mcp reconnect')).toBeNull()
-    expect(standaloneClaudeCommand('/review')).toBeNull()
-  })
 })

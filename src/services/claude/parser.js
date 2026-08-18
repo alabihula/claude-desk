@@ -35,6 +35,13 @@ function contextWindow(modelUsage = {}) {
   return Math.max(0, ...Object.values(modelUsage).map((usage) => Number(usage?.contextWindow || 0)))
 }
 
+function valueType(value) {
+  if (value === undefined) return 'missing'
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  return typeof value
+}
+
 export function parseClaudeEvent(payload) {
   if (!payload || typeof payload !== 'object') return []
   const events = []
@@ -98,6 +105,7 @@ export function parseClaudeEvent(payload) {
     events.push({
       type: 'result',
       text: typeof payload.result === 'string' ? payload.result : '',
+      valueType: valueType(payload.result),
       error: Boolean(payload.is_error),
       errorMessage: payload.error || payload.result || '',
       permissionDenials: Array.isArray(payload.permission_denials) ? payload.permission_denials : [],

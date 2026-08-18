@@ -12,7 +12,9 @@ import { externalSkillPrompt } from '../services/skills'
 import { fileSelectionsPrompt } from '../services/localFiles'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
+import { applyRunTaskEvent } from '../services/claude/tasks'
 import { diagnosticMessage } from '../services/claude/diagnostics'
+import { applyDisplaySettings, normalizeConversationDensity } from '../services/displaySettings'
 
 const defaultSettings = {
   command: 'claude',
@@ -23,6 +25,7 @@ const defaultSettings = {
   editor: 'vscode',
   sidebarMode: 'focused',
   language: 'en',
+  conversationDensity: 'comfortable',
 }
 
 let diffRequestId = 0
@@ -63,6 +66,8 @@ function newRun(operation = 'chat', context = null) {
     streamBlocks: {},
     streamMessageId: '',
     timelineSequence: 0,
+    tasks: [],
+    taskToolUses: {},
     status: 'starting',
     error: '',
     finalized: false,
@@ -71,6 +76,7 @@ function newRun(operation = 'chat', context = null) {
     resultValueType: 'missing',
     permissionDenied: false,
     diagnosticKind: '',
+    compactResult: operation === 'compact' ? 'pending' : '',
     context: context ? { ...context } : { tokens: 0, window: 0, measured: false },
   }
 }
@@ -476,6 +482,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           args: this.settings.args,
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
+          operation: 'chat',
           skillPath: queued.skill?.path || null,
           model: queued.model,
           effort: queued.effort,
@@ -602,7 +609,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       if (payload.kind === 'stream') {
         for (const event of parseClaudeEvent(payload.data)) {
+          if (applyRunTaskEvent(run, event)) continue
           if (applyRunTimelineEvent(run, event)) continue
+          if (event.type === 'compact-result') {
+            run.compactResult = event.success ? 'success' : 'failed'
+            if (!event.success) {
+              run.status = 'error'
+              run.error = event.error || 'Claude could not compact this conversation.'
+            }
+          }
           if (event.type === 'text') { run.content += event.text; run.sawPartialText = true }
           if (event.type === 'full-text' && !run.sawPartialText && !run.content) run.content = event.text
           if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
@@ -615,7 +630,7 @@ export const useWorkspaceStore = defineStore('workspace', {
             if (event.permissionDenials.length) run.permissionDenied = true
             if (event.error) {
               if (run.status !== 'stopping' && run.status !== 'steering') { run.status = 'error'; run.error = event.errorMessage }
-            } else if (run.status !== 'stopping' && run.status !== 'steering') run.status = 'finishing'
+            } else if (!['stopping', 'steering', 'error'].includes(run.status)) run.status = 'finishing'
           }
         }
       }
@@ -625,6 +640,10 @@ export const useWorkspaceStore = defineStore('workspace', {
         else if (!payload.data?.success && run.status !== 'stopping' && run.status !== 'error') {
           run.status = 'error'
           run.error ||= 'Claude exited before completing the response.'
+          run.diagnosticKind = 'run-error'
+        } else if (payload.data?.success && run.operation === 'compact' && run.compactResult !== 'success' && run.status !== 'error') {
+          run.status = 'error'
+          run.error = 'Claude did not confirm that context compaction completed.'
           run.diagnosticKind = 'run-error'
         } else if (payload.data?.success && run.operation === 'chat' && !run.content.trim() && run.status !== 'stopping' && run.status !== 'error') {
           // A zero-exit process without answer text is not a successful product response.
@@ -781,11 +800,15 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async saveAppSettings(settings) {
-      this.settings = { ...defaultSettings, ...settings }
+      this.settings = {
+        ...defaultSettings,
+        ...settings,
+        conversationDensity: normalizeConversationDensity(settings.conversationDensity),
+      }
       await desktop.saveSettings(this.settings)
       await this.refreshHealth()
       this.settingsOpen = false
-      document.documentElement.dataset.theme = this.settings.theme
+      applyDisplaySettings(this.settings)
     },
 
     async saveConfiguration(content, generalSettings) {
@@ -798,10 +821,11 @@ export const useWorkspaceStore = defineStore('workspace', {
         ...defaultSettings,
         ...removeMigratedLegacySettings(this.settings),
         ...generalSettings,
+        conversationDensity: normalizeConversationDensity(generalSettings.conversationDensity),
       }
       await desktop.saveSettings(this.settings)
       await this.refreshHealth()
-      document.documentElement.dataset.theme = this.settings.theme
+      applyDisplaySettings(this.settings)
       this.settingsOpen = false
     },
 
@@ -822,6 +846,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           args: this.settings.args,
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
+          operation: 'compact',
           model: conversation.model || null,
           effort: conversation.effort || null,
         })

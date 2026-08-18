@@ -488,6 +488,13 @@ fn context_stats(
         .map_err(|error| error.to_string())
 }
 
+pub fn read_context_stats(
+    app: &AppHandle,
+    conversation_id: &str,
+) -> Result<Option<ContextStats>, String> {
+    context_stats(&connect(app)?, conversation_id)
+}
+
 pub fn save_context_stats(app: &AppHandle, stats: &ContextStats) -> Result<(), String> {
     connect(app)?
         .execute(
@@ -503,7 +510,7 @@ pub fn load_context_stats(
     app: AppHandle,
     conversation_id: String,
 ) -> Result<Option<ContextStats>, String> {
-    context_stats(&connect(&app)?, &conversation_id)
+    read_context_stats(&app, &conversation_id)
 }
 
 #[tauri::command]

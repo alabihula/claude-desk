@@ -4,6 +4,7 @@ import { Check, Circle, CircleStop, ShieldAlert, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { translateActivity, useI18n } from '../../services/i18n'
 import ThinkingBlock from './ThinkingBlock.vue'
+import TaskProgress from './TaskProgress.vue'
 const props = defineProps({ run: { type: Object, required: true } })
 const store = useWorkspaceStore()
 const { language, t } = useI18n()
@@ -25,6 +26,7 @@ const entries = computed(() => props.run.timeline?.length
       <span v-else-if="run.status === 'complete'">{{ t('activity.done') }}</span>
       <span v-else>{{ t('activity.working') }}</span>
     </div>
+    <TaskProgress v-if="run.tasks?.length" :tasks="run.tasks" />
     <div v-if="entries.length" class="activity-list">
       <template v-for="entry in entries" :key="entry.id">
         <ThinkingBlock v-if="entry.type === 'thinking'" :item="entry" />

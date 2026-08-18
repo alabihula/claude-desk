@@ -1,3 +1,5 @@
+import { taskEventFromToolUse } from './tasks'
+
 const TOOL_LABELS = {
   Read: 'Reading',
   Edit: 'Editing',
@@ -26,6 +28,11 @@ function toolActivity(block) {
   }
 }
 
+function appendToolEvent(events, block) {
+  const taskEvent = taskEventFromToolUse(block)
+  events.push(taskEvent || { type: 'activity', activity: toolActivity(block) })
+}
+
 function contextTokens(usage = {}) {
   return ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens']
     .reduce((total, key) => total + Number(usage[key] || 0), 0)
@@ -50,6 +57,14 @@ export function parseClaudeEvent(payload) {
     events.push({ type: 'session', sessionId: payload.session_id })
   }
 
+  if (payload.type === 'system' && payload.subtype === 'status' && payload.compact_result) {
+    events.push({
+      type: 'compact-result',
+      success: payload.compact_result === 'success',
+      error: String(payload.compact_error || ''),
+    })
+  }
+
   if (payload.type === 'stream_event') {
     const event = payload.event || {}
     if (event.type === 'message_start') {
@@ -65,7 +80,7 @@ export function parseClaudeEvent(payload) {
       events.push({ type: 'thinking', index: event.index, text: event.delta.thinking || '' })
     }
     if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-      events.push({ type: 'activity', activity: toolActivity(event.content_block) })
+      appendToolEvent(events, event.content_block)
     }
     if (event.type === 'content_block_stop') {
       events.push({ type: 'block-complete', index: event.index })
@@ -82,7 +97,7 @@ export function parseClaudeEvent(payload) {
       if (block.type === 'redacted_thinking') {
         events.push({ type: 'full-thinking', messageId: payload.message?.id || '', index, text: '', hidden: true })
       }
-      if (block.type === 'tool_use') events.push({ type: 'activity', activity: toolActivity(block) })
+      if (block.type === 'tool_use') appendToolEvent(events, block)
     }
     if (text) events.push({ type: 'full-text', text })
     const tokens = contextTokens(payload.message?.usage)
@@ -92,7 +107,13 @@ export function parseClaudeEvent(payload) {
   if (payload.type === 'user') {
     for (const block of payload.message?.content || []) {
       if (block.type === 'tool_result') {
-        events.push({ type: 'activity-complete', id: block.tool_use_id, error: Boolean(block.is_error) })
+        const event = {
+          type: 'activity-complete',
+          id: block.tool_use_id,
+          error: Boolean(block.is_error),
+        }
+        if (block.content !== undefined) event.result = block.content
+        events.push(event)
       }
     }
   }

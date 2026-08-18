@@ -63,4 +63,18 @@ describe('SettingsModal', () => {
       okLabel: 'Restart Now',
     }))
   })
+
+  it('saves the selected conversation density as an app preference', async () => {
+    store.saveConfiguration = vi.fn(async () => {})
+    const density = root.querySelector('[data-testid="conversation-density"]')
+    density.value = 'compact'
+    density.dispatchEvent(new Event('change'))
+
+    root.querySelector('footer .primary-button').click()
+    await vi.waitFor(() => expect(store.saveConfiguration).toHaveBeenCalled())
+
+    expect(store.saveConfiguration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      conversationDensity: 'compact',
+    }))
+  })
 })

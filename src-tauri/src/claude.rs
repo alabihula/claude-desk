@@ -68,6 +68,7 @@ pub struct ClaudeRequest {
     pub skill_path: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub operation: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -423,6 +424,10 @@ pub async fn send_claude(
     if !allowed_modes.contains(&permission_mode) {
         return Err("Unsupported Claude permission mode".into());
     }
+    let operation = request.operation.as_deref().unwrap_or("chat");
+    if !["chat", "compact"].contains(&operation) {
+        return Err("Unsupported Claude operation".into());
+    }
 
     let model = runtime::normalize_model(request.model.as_deref())?;
     let effort = runtime::normalize_effort(request.effort.as_deref())?;
@@ -506,6 +511,7 @@ pub async fn send_claude(
             model: model.clone(),
             effort: effort.clone(),
             permission_mode,
+            operation,
         },
     );
     let input = Arc::new(AsyncMutex::new(Some(
@@ -630,6 +636,27 @@ pub async fn send_claude(
             }
         }
         let status = child.wait().await;
+        let previous_context = data::read_context_stats(&app_for_task, &conversation_id)
+            .ok()
+            .flatten();
+        // Slash-command results commonly omit modelUsage and run-level usage.
+        // Keep the last known metadata instead of making the context meter regress.
+        let effective_context_window = if context_window > 0 {
+            context_window
+        } else {
+            previous_context
+                .as_ref()
+                .map(|stats| stats.window)
+                .unwrap_or(0)
+        };
+        let effective_cumulative_tokens = if cumulative_tokens > 0 {
+            cumulative_tokens
+        } else {
+            previous_context
+                .as_ref()
+                .map(|stats| stats.cumulative_tokens)
+                .unwrap_or(0)
+        };
         let mut context_stats = None;
         for attempt in 0..3 {
             match context::latest_session_usage(&context_config_dir, &session_id) {
@@ -637,8 +664,8 @@ pub async fn send_claude(
                     let stats = data::ContextStats {
                         conversation_id: conversation_id.clone(),
                         tokens,
-                        window: context_window,
-                        cumulative_tokens,
+                        window: effective_context_window,
+                        cumulative_tokens: effective_cumulative_tokens,
                         source: "claude-transcript".into(),
                         updated_at: Utc::now().to_rfc3339(),
                     };
@@ -655,8 +682,8 @@ pub async fn send_claude(
             let stats = data::ContextStats {
                 conversation_id: conversation_id.clone(),
                 tokens: 0,
-                window: context_window,
-                cumulative_tokens,
+                window: effective_context_window,
+                cumulative_tokens: effective_cumulative_tokens,
                 source: "provider-cumulative".into(),
                 updated_at: Utc::now().to_rfc3339(),
             };

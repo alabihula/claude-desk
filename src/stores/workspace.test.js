@@ -43,6 +43,9 @@ function runningRun(status = 'running', content = '') {
     operation: 'chat',
     content,
     activities: [],
+    timeline: [],
+    tasks: [],
+    taskToolUses: {},
     status,
     error: '',
     finalized: false,
@@ -199,6 +202,37 @@ describe('workspace supplemental messages', () => {
     expect(store.activeMessages.at(-1)).toMatchObject({ role: 'assistant', content: '已完成' })
   })
 
+  it('keeps Task tool progress in a live checklist instead of raw activity rows', () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: { type: 'assistant', message: { content: [{
+        type: 'tool_use', id: 'create-1', name: 'TaskCreate',
+        input: { activeForm: '正在编译验证', description: '运行生产构建' },
+      }] } },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: { type: 'user', message: { content: [{
+        type: 'tool_result', tool_use_id: 'create-1', content: 'Task #1 created successfully: 运行生产构建',
+      }] } },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: { type: 'assistant', message: { content: [{
+        type: 'tool_use', id: 'update-1', name: 'TaskUpdate', input: { taskId: '1', status: 'completed' },
+      }] } },
+    })
+
+    expect(store.activeRun.tasks).toEqual([expect.objectContaining({
+      id: '1', subject: '正在编译验证', status: 'completed',
+    })])
+    expect(store.activeRun.activities).toEqual([])
+    expect(store.activeRun.timeline).toEqual([])
+  })
+
   it('persists a diagnostic event and pauses queued work when Claude exits successfully without text', async () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()
@@ -258,6 +292,70 @@ describe('workspace supplemental messages', () => {
       measured: true,
       percentage: 38,
       cumulativeTokens: 76032,
+    })
+  })
+
+  it('updates context usage after confirmed manual compaction', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = {
+      tokens: 22723, window: 200000, measured: true, source: 'claude-transcript',
+    }
+
+    await store.compactConversation()
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ operation: 'compact' }))
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: { type: 'system', subtype: 'status', status: null, compact_result: 'success' },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'context',
+      data: { tokens: 571, window: 200000, source: 'claude-transcript' },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: { type: 'result', result: '', is_error: false },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'exit', data: { success: true, code: 0 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeContext).toMatchObject({ tokens: 571, window: 200000, measured: true, percentage: 0 })
+    expect(store.activeMessages.at(-1)).toMatchObject({
+      role: 'system', content: 'Context compacted manually · Full transcript remains available',
+    })
+  })
+
+  it('does not report manual compaction as complete when Claude rejects it', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = {
+      tokens: 1200, window: 200000, measured: true, source: 'claude-transcript',
+    }
+
+    await store.compactConversation()
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: {
+        type: 'system', subtype: 'status', status: null, compact_result: 'failed',
+        compact_error: 'Not enough messages to compact.',
+      },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: { type: 'result', result: 'Not enough messages to compact.', is_error: false },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'exit', data: { success: true, code: 0 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeContext).toMatchObject({ tokens: 1200, percentage: 1 })
+    expect(store.activeMessages).not.toContainEqual(expect.objectContaining({
+      content: 'Context compacted manually · Full transcript remains available',
+    }))
+    expect(store.activeMessages.at(-1)).toMatchObject({
+      role: 'system', content: 'claude-desk:diagnostic:run-error:run-next',
     })
   })
 

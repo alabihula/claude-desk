@@ -12,13 +12,14 @@ import { useWorkspaceStore } from '../../stores/workspace'
 import { useI18n } from '../../services/i18n'
 import CodeSnippetCapsule from '../common/CodeSnippetCapsule.vue'
 import { parseDiagnosticMessage } from '../../services/claude/diagnostics'
+import { formatMessageTime } from '../../services/messageTime'
 
 const props = defineProps({
   message: { type: Object, required: true },
   attachments: { type: Array, default: () => [] },
 })
 const store = useWorkspaceStore()
-const { t } = useI18n()
+const { language, t } = useI18n()
 const copyTimers = new Map()
 const downloadTimers = new Map()
 const downloadableFiles = ref([])
@@ -36,6 +37,7 @@ const rendered = computed(() => {
   return createMessageMarkdown({ code: t('message.code'), copy: t('message.copy'), copyAria: t('message.copyCode') }).render(content.trim())
 })
 const diagnostic = computed(() => props.message.role === 'system' ? parseDiagnosticMessage(props.message.content) : null)
+const messageTime = computed(() => formatMessageTime(props.message.createdAt || props.message.created_at, language.value))
 const fileRefs = computed(() => {
   return extractProjectFileReferences(props.message.content)
 })
@@ -160,54 +162,58 @@ onBeforeUnmount(() => {
   </article>
   <article v-else-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
   <article v-else class="message" :class="`message-${message.role}`">
-    <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>
-    <CodeSnippetCapsule v-if="message.role === 'user'" :snippets="message.snippets || []" />
-    <div class="message-body markdown-body" @click="handleMessageClick" v-html="rendered"></div>
-    <div v-if="attachments.length" class="message-attachments">
-      <button
-        v-for="attachment in attachments"
-        :key="attachment.id"
-        :class="attachment.kind === 'image' ? 'message-image' : 'message-file'"
-        :title="t(attachment.kind === 'image' ? 'message.preview' : 'message.reveal', { name: attachment.name })"
-        @click="openAttachment(attachment)"
-      >
-        <template v-if="attachment.kind === 'image'">
-          <img :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
-          <span><ZoomIn :size="15" /></span>
-        </template>
-        <template v-else><File :size="15" /><em>{{ attachment.name }}</em></template>
-      </button>
-    </div>
-    <div v-if="fileRefs.length" class="file-references">
-      <button v-for="file in fileRefs" :key="`${file.path}:${file.line}`" class="file-chip" @click="openFile(file)">
-        <FileCode2 :size="14" />{{ file.path }}<span v-if="file.line">:{{ file.line }}</span>
-      </button>
-    </div>
-    <div v-if="downloadableFiles.length" class="downloadable-files">
-      <div
-        v-for="file in downloadableFiles"
-        :key="file.path"
-        class="download-file-card"
-      >
-        <button class="download-file-open" :title="file.path" @click="openDownloadableFile(file)">
-          <span class="download-file-icon"><FileText :size="18" /></span>
-          <span class="download-file-info"><strong>{{ file.name }}</strong><small>{{ formatFileSize(file.size) }}</small></span>
-        </button>
-        <button class="download-file-action" :title="t('message.downloadTitle', { path: file.path })" :disabled="downloadStatus[file.path] === 'saving'" @click="downloadLocalFile(file)">
-          <Download :size="14" />{{ t(downloadStatus[file.path] === 'saving' ? 'message.saving' : downloadStatus[file.path] === 'saved' ? 'message.saved' : 'message.download') }}
+    <div class="message-surface">
+      <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>
+      <CodeSnippetCapsule v-if="message.role === 'user'" :snippets="message.snippets || []" />
+      <div class="message-body markdown-body" @click="handleMessageClick" v-html="rendered"></div>
+      <div v-if="attachments.length" class="message-attachments">
+        <button
+          v-for="attachment in attachments"
+          :key="attachment.id"
+          :class="attachment.kind === 'image' ? 'message-image' : 'message-file'"
+          :title="t(attachment.kind === 'image' ? 'message.preview' : 'message.reveal', { name: attachment.name })"
+          @click="openAttachment(attachment)"
+        >
+          <template v-if="attachment.kind === 'image'">
+            <img :src="convertFileSrc(attachment.path)" :alt="attachment.name" />
+            <span><ZoomIn :size="15" /></span>
+          </template>
+          <template v-else><File :size="15" /><em>{{ attachment.name }}</em></template>
         </button>
       </div>
+      <div v-if="fileRefs.length" class="file-references">
+        <button v-for="file in fileRefs" :key="`${file.path}:${file.line}`" class="file-chip" @click="openFile(file)">
+          <FileCode2 :size="14" />{{ file.path }}<span v-if="file.line">:{{ file.line }}</span>
+        </button>
+      </div>
+      <div v-if="downloadableFiles.length" class="downloadable-files">
+        <div
+          v-for="file in downloadableFiles"
+          :key="file.path"
+          class="download-file-card"
+        >
+          <button class="download-file-open" :title="file.path" @click="openDownloadableFile(file)">
+            <span class="download-file-icon"><FileText :size="18" /></span>
+            <span class="download-file-info"><strong>{{ file.name }}</strong><small>{{ formatFileSize(file.size) }}</small></span>
+          </button>
+          <button class="download-file-action" :title="t('message.downloadTitle', { path: file.path })" :disabled="downloadStatus[file.path] === 'saving'" @click="downloadLocalFile(file)">
+            <Download :size="14" />{{ t(downloadStatus[file.path] === 'saving' ? 'message.saving' : downloadStatus[file.path] === 'saved' ? 'message.saved' : 'message.download') }}
+          </button>
+        </div>
+      </div>
     </div>
-    <button
-      v-if="message.role === 'user'"
-      class="message-copy-action"
-      :class="{ copied: messageCopied }"
-      :title="t(messageCopied ? 'message.messageCopied' : 'message.copyMessage')"
-      @click="copyMessage"
-    >
-      <Check v-if="messageCopied" :size="13" />
-      <Copy v-else :size="13" />
-      {{ t(messageCopied ? 'message.messageCopied' : 'message.copyMessage') }}
-    </button>
+    <div v-if="message.role === 'user'" class="message-meta">
+      <time v-if="messageTime" class="message-time" :datetime="message.createdAt || message.created_at">{{ messageTime }}</time>
+      <button
+        class="message-copy-action"
+        :class="{ copied: messageCopied }"
+        :title="t(messageCopied ? 'message.messageCopied' : 'message.copyMessage')"
+        :aria-label="t(messageCopied ? 'message.messageCopied' : 'message.copyMessage')"
+        @click="copyMessage"
+      >
+        <Check v-if="messageCopied" :size="14" />
+        <Copy v-else :size="14" />
+      </button>
+    </div>
   </article>
 </template>

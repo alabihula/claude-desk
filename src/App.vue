@@ -15,6 +15,7 @@ import Workspace from './views/Workspace.vue'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './services/i18n'
 import { currentPlatform, isPrimaryShortcut } from './services/platform'
+import { applyDisplaySettings } from './services/displaySettings'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
@@ -44,7 +45,7 @@ onMounted(async () => {
   document.documentElement.dataset.platform = currentPlatform
   window.addEventListener('keydown', shortcuts)
   await store.init()
-  document.documentElement.dataset.theme = store.settings.theme
+  applyDisplaySettings(store.settings)
   document.documentElement.lang = store.settings.language
   unlistenDrag = await getCurrentWebviewWindow().onDragDropEvent((event) => {
     if (event.payload.type === 'enter' || event.payload.type === 'over') dragging.value = true

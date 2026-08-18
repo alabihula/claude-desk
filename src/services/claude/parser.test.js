@@ -39,10 +39,40 @@ describe('parseClaudeEvent', () => {
     expect(complete).toEqual([{ type: 'activity-complete', id: 'tool-1', error: false }])
   })
 
+  it('routes Task tools to structured task events instead of raw activity rows', () => {
+    const [create] = parseClaudeEvent({
+      type: 'assistant', message: { content: [{
+        type: 'tool_use', id: 'create-1', name: 'TaskCreate',
+        input: { subject: 'Compile changes', description: 'Run the build', activeForm: 'Compiling changes' },
+      }] },
+    })
+    expect(create).toMatchObject({
+      type: 'task-create', toolUseId: 'create-1', task: { subject: 'Compile changes', status: 'pending' },
+    })
+
+    const [result] = parseClaudeEvent({
+      type: 'user', message: { content: [{
+        type: 'tool_result', tool_use_id: 'create-1', content: '{"task":{"id":"1"}}',
+      }] },
+    })
+    expect(result).toEqual({
+      type: 'activity-complete', id: 'create-1', error: false, result: '{"task":{"id":"1"}}',
+    })
+  })
+
   it('recognizes successful and failed terminal results', () => {
     expect(parseClaudeEvent({ type: 'result', result: 'Done', is_error: false })[0]).toMatchObject({ type: 'result', text: 'Done', valueType: 'string', error: false })
     expect(parseClaudeEvent({ type: 'result', result: 'Failed', is_error: true })[0]).toMatchObject({ type: 'result', error: true })
     expect(parseClaudeEvent({ type: 'result', result: null, is_error: false })[0]).toMatchObject({ text: '', valueType: 'null' })
+  })
+
+  it('reports explicit context compaction success and failure', () => {
+    expect(parseClaudeEvent({
+      type: 'system', subtype: 'status', status: null, compact_result: 'success',
+    })).toEqual([{ type: 'compact-result', success: true, error: '' }])
+    expect(parseClaudeEvent({
+      type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Not enough messages to compact.',
+    })).toEqual([{ type: 'compact-result', success: false, error: 'Not enough messages to compact.' }])
   })
 
   it('surfaces permission denials for an actionable UI', () => {

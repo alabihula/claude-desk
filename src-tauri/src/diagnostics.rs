@@ -29,6 +29,14 @@ pub struct StreamSummary {
     result_value_type: String,
     result_text_chars: u64,
     result_error: Option<String>,
+    result_subtype: String,
+    result_num_turns: Option<u64>,
+    result_stop_reason: Option<String>,
+    terminal_reason: Option<String>,
+    compact_result: String,
+    compact_error: Option<String>,
+    claude_code_version: Option<String>,
+    resolved_model: Option<String>,
     other_event_types: Vec<String>,
 }
 
@@ -48,6 +56,7 @@ pub struct RunDiagnostics {
     model: Option<String>,
     effort: Option<String>,
     permission_mode: String,
+    operation: String,
     stream: StreamSummary,
     stderr: Vec<String>,
     exit_success: Option<bool>,
@@ -63,12 +72,13 @@ pub struct RunContext<'a> {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: &'a str,
+    pub operation: &'a str,
 }
 
 impl RunDiagnostics {
     pub fn new(app: &AppHandle, context: RunContext<'_>) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             app_version: app.package_info().version.to_string(),
             platform: std::env::consts::OS,
             architecture: std::env::consts::ARCH,
@@ -81,6 +91,7 @@ impl RunDiagnostics {
             model: context.model,
             effort: context.effort,
             permission_mode: context.permission_mode.into(),
+            operation: context.operation.into(),
             stream: StreamSummary::default(),
             stderr: Vec::new(),
             exit_success: None,
@@ -103,7 +114,8 @@ impl RunDiagnostics {
             "assistant" => self.observe_assistant(payload),
             "stream_event" => self.observe_stream_event(payload),
             "result" => self.observe_result(payload),
-            "control_request" | "control_response" | "system" | "user" => {}
+            "system" => self.observe_system(payload),
+            "control_request" | "control_response" | "user" => {}
             other
                 if !self
                     .stream
@@ -166,6 +178,47 @@ impl RunDiagnostics {
             .get("error")
             .and_then(Value::as_str)
             .map(redact_line);
+        self.stream.result_subtype = payload
+            .get("subtype")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .into();
+        self.stream.result_num_turns = payload.get("num_turns").and_then(Value::as_u64);
+        self.stream.result_stop_reason = payload
+            .get("stop_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        self.stream.terminal_reason = payload
+            .get("terminal_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+    }
+
+    fn observe_system(&mut self, payload: &Value) {
+        match payload.get("subtype").and_then(Value::as_str) {
+            Some("init") => {
+                self.stream.claude_code_version = payload
+                    .get("claude_code_version")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                self.stream.resolved_model = payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            Some("status") if payload.get("compact_result").is_some() => {
+                self.stream.compact_result = payload
+                    .get("compact_result")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .into();
+                self.stream.compact_error = payload
+                    .get("compact_error")
+                    .and_then(Value::as_str)
+                    .map(redact_line);
+            }
+            _ => {}
+        }
     }
 
     pub fn observe_stderr(&mut self, line: &str) {
@@ -326,6 +379,7 @@ mod tests {
             model: None,
             effort: None,
             permission_mode: "acceptEdits".into(),
+            operation: "chat".into(),
             stream: Default::default(),
             stderr: vec![],
             exit_success: None,
@@ -341,6 +395,53 @@ mod tests {
 
         assert!(serialized.contains("assistantTextChars\":19"));
         assert!(!serialized.contains("private source code"));
+    }
+
+    #[test]
+    fn records_runtime_and_compaction_outcomes_without_raw_content() {
+        let mut diagnostics = RunDiagnostics {
+            schema_version: 2,
+            app_version: "test".into(),
+            platform: "test",
+            architecture: "test",
+            started_at: "now".into(),
+            completed_at: None,
+            conversation_id: "conversation-1".into(),
+            run_id: "run-1".into(),
+            session_id: "session-1".into(),
+            resumed: true,
+            model: Some("sonnet[1m]".into()),
+            effort: Some("medium".into()),
+            permission_mode: "acceptEdits".into(),
+            operation: "compact".into(),
+            stream: Default::default(),
+            stderr: vec![],
+            exit_success: None,
+            exit_code: None,
+            wait_error: None,
+        };
+        diagnostics.observe_stdout(
+            "init",
+            &json!({ "type": "system", "subtype": "init", "claude_code_version": "2.1.224", "model": "claude-sonnet-5[1m]" }),
+            true,
+        );
+        diagnostics.observe_stdout(
+            "status",
+            &json!({ "type": "system", "subtype": "status", "compact_result": "failed", "compact_error": "Not enough messages to compact." }),
+            true,
+        );
+        diagnostics.observe_stdout(
+            "result",
+            &json!({ "type": "result", "subtype": "success", "result": "", "num_turns": 0, "terminal_reason": "completed" }),
+            true,
+        );
+
+        let value = serde_json::to_value(&diagnostics).unwrap();
+        assert_eq!(value["operation"], "compact");
+        assert_eq!(value["stream"]["claudeCodeVersion"], "2.1.224");
+        assert_eq!(value["stream"]["resolvedModel"], "claude-sonnet-5[1m]");
+        assert_eq!(value["stream"]["compactResult"], "failed");
+        assert_eq!(value["stream"]["resultNumTurns"], 0);
     }
 
     #[test]

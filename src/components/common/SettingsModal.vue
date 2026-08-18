@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../../stores/workspace'
 import { applyVisualClaudeSettings, visualFromClaudeSettings } from '../../services/claude/settings'
 import { desktop } from '../../services/desktop'
 import { useI18n } from '../../services/i18n'
+import { normalizeConversationDensity } from '../../services/displaySettings'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
@@ -18,7 +19,7 @@ const saving = ref(false)
 const workingConfig = ref({})
 const form = reactive({
   baseUrl: '', token: '', model: '', autoCompact: true, compactThreshold: 'default', contextWindow: '',
-  theme: 'system', editor: 'vscode', language: 'en',
+  theme: 'system', editor: 'vscode', language: 'en', conversationDensity: 'comfortable',
 })
 
 function reset() {
@@ -31,6 +32,7 @@ function reset() {
     theme: store.settings.theme,
     editor: store.settings.editor,
     language: store.settings.language,
+    conversationDensity: normalizeConversationDensity(store.settings.conversationDensity),
   })
 }
 
@@ -85,7 +87,12 @@ async function save() {
       ? JSON.stringify(parsed, null, 2)
       : JSON.stringify(applyVisualClaudeSettings(parsed, form), null, 2)
     const restartRequired = store.languageRestartRequired
-    await store.saveConfiguration(content, { theme: form.theme, editor: form.editor, language: form.language })
+    await store.saveConfiguration(content, {
+      theme: form.theme,
+      editor: form.editor,
+      language: form.language,
+      conversationDensity: form.conversationDensity,
+    })
     if (restartRequired && await confirm(t('settings.languageRestartBody'), {
       title: t('settings.languageRestartTitle'),
       okLabel: t('settings.restartNow'),
@@ -136,8 +143,9 @@ async function save() {
 
         <section class="settings-section general-settings">
           <div class="settings-heading"><h3>{{ t('settings.app') }}</h3><p>{{ t('settings.appHelp') }}</p></div>
-          <div class="three-column">
+          <div class="two-column">
             <label>{{ t('settings.appearance') }}<select v-model="form.theme"><option value="system">{{ t('settings.system') }}</option><option value="light">{{ t('settings.light') }}</option><option value="dark">{{ t('settings.dark') }}</option></select></label>
+            <label>{{ t('settings.conversationDensity') }} <span>{{ t('settings.conversationDensityHelp') }}</span><select v-model="form.conversationDensity" data-testid="conversation-density"><option value="comfortable">{{ t('settings.comfortable') }}</option><option value="compact">{{ t('settings.compact') }}</option></select></label>
             <label>{{ t('settings.language') }}<select v-model="form.language" @change="changeLanguage"><option value="en">{{ t('settings.english') }}</option><option value="zh-CN">{{ t('settings.chinese') }}</option></select></label>
             <label>{{ t('settings.openLinks') }} <span>{{ t('settings.openLinksHelp') }}</span><select v-model="form.editor"><option value="claude-desk">Claude Desk</option><option value="vscode">VS Code</option><option value="cursor">Cursor</option><option value="system">{{ t('settings.systemDefault') }}</option></select></label>
           </div>

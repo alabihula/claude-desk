@@ -64,6 +64,18 @@ fn parse_session_usage(path: &Path) -> Result<Option<i64>, String> {
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if record.get("subtype").and_then(Value::as_str) == Some("compact_boundary") {
+            // Compaction does not emit a normal assistant usage frame. Its
+            // postTokens value is the first authoritative size of the new context.
+            if let Some(tokens) = record
+                .pointer("/compactMetadata/postTokens")
+                .and_then(Value::as_i64)
+                .filter(|tokens| *tokens >= 0)
+            {
+                latest = Some(tokens);
+            }
+            continue;
+        }
         if record.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
@@ -113,6 +125,52 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parse_session_usage(&path).unwrap(), Some(76304));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn uses_post_compaction_tokens_for_manual_and_auto_compaction() {
+        for (trigger, pre_tokens, post_tokens) in
+            [("manual", 22_724, 571), ("auto", 167_502, 5_540)]
+        {
+            let path = std::env::temp_dir().join(format!(
+                "claude-desk-compaction-{}.jsonl",
+                uuid::Uuid::new_v4()
+            ));
+            fs::write(
+                &path,
+                format!(
+                    "{{\"type\":\"assistant\",\"message\":{{\"usage\":{{\"input_tokens\":{},\"output_tokens\":1}}}}}}\n{{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{{\"trigger\":\"{}\",\"preTokens\":{},\"postTokens\":{}}}}}\n",
+                    pre_tokens - 1,
+                    trigger,
+                    pre_tokens,
+                    post_tokens
+                ),
+            )
+            .unwrap();
+
+            assert_eq!(parse_session_usage(&path).unwrap(), Some(post_tokens));
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn later_assistant_usage_replaces_post_compaction_tokens() {
+        let path = std::env::temp_dir().join(format!(
+            "claude-desk-post-compaction-{}.jsonl",
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":22000}}}\n",
+                "{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"compactMetadata\":{\"trigger\":\"manual\",\"postTokens\":571}}\n",
+                "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":900,\"output_tokens\":25}}}\n"
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(parse_session_usage(&path).unwrap(), Some(925));
         fs::remove_file(path).unwrap();
     }
 

@@ -346,8 +346,8 @@ button.workspace-tab { padding: 0 10px; gap: 6px; }.workspace-tab:hover { backgr
 .queued-messages > header { padding: 0 2px 7px; display: flex; align-items: center; gap: 7px; }
 .queued-messages > header strong { font-size: 10px; letter-spacing: .02em; }
 .queued-messages > header span { color: var(--text-faint); font-size: 9px; }
-.queued-message-list { display: grid; gap: 5px; }
-.queued-message-list article { min-height: 38px; padding: 5px 5px 5px 7px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
+.queued-message-list { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.queued-message-list article { min-width: 0; min-height: 38px; padding: 5px 5px 5px 7px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
 .queued-message-list article.steering { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 30%, var(--surface)); }
 .queue-index { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: var(--surface-hover); color: var(--text-faint); font-size: 9px; }
 .queue-content { min-width: 0; flex: 1; }

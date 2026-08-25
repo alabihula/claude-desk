@@ -596,7 +596,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       if (payload.kind === 'started' && run.status === 'starting') run.status = 'running'
-      if (payload.kind === 'stderr') run.error = payload.data?.message || ''
+      // stderr also carries non-fatal provider diagnostics. The backend keeps a
+      // bounded, redacted copy for exports; only structured errors belong in the UI.
       if (payload.kind === 'context') {
         const context = storedContext(payload.data)
         if (context) Object.assign(run.context, context)

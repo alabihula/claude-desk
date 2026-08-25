@@ -202,6 +202,30 @@ describe('workspace supplemental messages', () => {
     expect(store.activeMessages.at(-1)).toMatchObject({ role: 'assistant', content: '已完成' })
   })
 
+  it('does not present non-fatal stderr diagnostics as a run error', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stderr',
+      data: { message: '[claude-code:unrecognized_model] {"model":"custom-latest","query_source":"sdk"}' },
+    })
+
+    expect(store.activeRun).toMatchObject({ status: 'running', error: '' })
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: { type: 'result', result: '回答正常完成', is_error: false },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: true, code: 0 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeMessages.at(-1)).toMatchObject({ role: 'assistant', content: '回答正常完成' })
+    expect(store.activeMessages).not.toContainEqual(expect.objectContaining({ role: 'system' }))
+  })
+
   it('keeps Task tool progress in a live checklist instead of raw activity rows', () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()

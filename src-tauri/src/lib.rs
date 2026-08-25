@@ -64,6 +64,8 @@ pub fn run() {
             files::list_project_directory,
             files::read_project_file,
             files::open_in_editor,
+            files::open_project_html,
+            files::reveal_project_file,
             files::reveal_path,
             files::open_terminal,
             platform::sync_app_language,

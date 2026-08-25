@@ -7,7 +7,14 @@ vi.mock('@tauri-apps/api/core', () => ({ convertFileSrc: (path) => `asset:${path
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 vi.mock('@tauri-apps/api/path', () => ({ downloadDir: vi.fn(), join: vi.fn() }))
-vi.mock('../../services/desktop', () => ({ desktop: { resolveLocalFiles: vi.fn().mockResolvedValue([]), exportRunDiagnostic: vi.fn().mockResolvedValue() } }))
+vi.mock('../../services/desktop', () => ({ desktop: {
+  resolveLocalFiles: vi.fn().mockResolvedValue([]),
+  exportRunDiagnostic: vi.fn().mockResolvedValue(),
+  openProjectHtml: vi.fn().mockResolvedValue(),
+  revealProjectFile: vi.fn().mockResolvedValue(),
+  readProjectFile: vi.fn().mockResolvedValue(),
+  openInEditor: vi.fn().mockResolvedValue(),
+} }))
 import { desktop } from '../../services/desktop'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useWorkspaceStore } from '../../stores/workspace'
@@ -168,6 +175,46 @@ describe('MessageList stream following', () => {
     expect(desktop.resolveLocalFiles).toHaveBeenCalledWith('/project', ['./exports/report.xlsx'])
     expect(root.querySelectorAll('.download-file-card')).toHaveLength(1)
     expect(root.querySelector('.download-file-card')?.textContent).toContain('report.xlsx')
+  })
+
+  it('intercepts project links and routes images, HTML, and other files without navigating the app', async () => {
+    const files = {
+      './exports/panel.png': { name: 'panel.png', path: '/project/exports/panel.png', size: 100 },
+      './exports/panel.html': { name: 'panel.html', path: '/project/exports/panel.html', size: 200 },
+      './exports/report.pdf': { name: 'report.pdf', path: '/project/exports/report.pdf', size: 300 },
+    }
+    desktop.resolveLocalFiles.mockImplementation(async (_, candidates) => candidates.map((path) => files[path]).filter(Boolean))
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const pinia = createPinia()
+    const store = useWorkspaceStore(pinia)
+    store.projects = [{ id: 'project-1', path: '/project' }]
+    store.activeProjectId = 'project-1'
+    app = createApp({
+      render: () => h(MessageList, {
+        conversationId: 'conversation-1',
+        messages: [{
+          id: 'assistant-1', role: 'assistant',
+          content: '[下载图片](./exports/panel.png)\n\n[下载页面](./exports/panel.html)\n\n[下载报告](./exports/report.pdf)',
+        }],
+        attachmentsByMessage: {},
+      }),
+    })
+    app.use(pinia)
+    app.mount(root)
+    await nextTick()
+
+    const links = root.querySelectorAll('.message-body a')
+    const click = (link) => link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+
+    expect(click(links[0])).toBe(false)
+    await vi.waitFor(() => expect(store.previewAttachment).toMatchObject({ name: 'panel.png', kind: 'image' }))
+
+    expect(click(links[1])).toBe(false)
+    await vi.waitFor(() => expect(desktop.openProjectHtml).toHaveBeenCalledWith('/project', '/project/exports/panel.html'))
+
+    expect(click(links[2])).toBe(false)
+    await vi.waitFor(() => expect(desktop.revealProjectFile).toHaveBeenCalledWith('/project', '/project/exports/report.pdf'))
   })
 
   it('renders an empty-response diagnostic and exports the matching privacy-safe record', async () => {

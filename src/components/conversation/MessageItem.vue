@@ -6,7 +6,7 @@ import { save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { AlertTriangle, Check, Copy, Download, File, FileCode2, FileText, Minimize2, ZoomIn } from 'lucide-vue-next'
 import { desktop } from '../../services/desktop'
-import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize } from '../../services/localFiles'
+import { extractLocalFileCandidates, extractProjectFileReferences, formatFileSize, localProjectLink } from '../../services/localFiles'
 import { codeCopyPayload, createMessageMarkdown, externalHttpUrl, writeClipboardText } from '../../services/markdown'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useI18n } from '../../services/i18n'
@@ -64,7 +64,7 @@ async function openFile(file) {
 }
 
 async function openDownloadableFile(file) {
-  await store.openFile(file.path)
+  await store.openResolvedLocalFile(file)
 }
 
 function openAttachment(attachment) {
@@ -92,6 +92,17 @@ async function copyCode(event) {
 }
 
 async function handleMessageClick(event) {
+  const localPath = localProjectLink(event.target)
+  if (localPath) {
+    event.preventDefault()
+    try {
+      if (!store.activeProject) return
+      const [file] = await desktop.resolveLocalFiles(store.activeProject.path, [localPath])
+      if (!file) throw new Error(t('message.localFileUnavailable'))
+      await store.openResolvedLocalFile(file)
+    } catch (error) { store.error = String(error) }
+    return
+  }
   const url = externalHttpUrl(event.target)
   if (!url) return copyCode(event)
   event.preventDefault()

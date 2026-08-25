@@ -9,7 +9,7 @@ import { normalizeQuestionRequest } from '../services/claude/questions'
 import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeNextQueuedMessage } from '../services/claude/queue'
 import { withRuntimeGuidance } from '../services/claude/runtime'
 import { externalSkillPrompt } from '../services/skills'
-import { fileSelectionsPrompt } from '../services/localFiles'
+import { fileSelectionsPrompt, projectFileOpenMode } from '../services/localFiles'
 import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 import { applyRunTaskEvent } from '../services/claude/tasks'
@@ -793,6 +793,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       } catch (error) {
         if (this.filePreview?.requestId === requestId) Object.assign(this.filePreview, { error: String(error), loading: false })
       }
+    },
+
+    async openResolvedLocalFile(file) {
+      if (!this.activeProject || !file?.path) return
+      const mode = projectFileOpenMode(file.name || file.path)
+      if (mode === 'image') {
+        this.previewAttachment = { ...file, kind: 'image' }
+        return
+      }
+      try {
+        if (mode === 'html') await desktop.openProjectHtml(this.activeProject.path, file.path)
+        else if (mode === 'reveal') await desktop.revealProjectFile(this.activeProject.path, file.path)
+        else await this.openFile(file.path)
+      } catch (error) { this.error = String(error) }
     },
 
     closeFilePreview() {

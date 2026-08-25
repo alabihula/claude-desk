@@ -37,6 +37,18 @@ pub struct ProjectEntry {
 }
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
+const PREVIEW_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+
+fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| extensions.contains(&value.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn is_preview_image(path: &Path) -> bool {
+    has_extension(path, PREVIEW_IMAGE_EXTENSIONS)
+}
 
 fn attachment_dir(app: &AppHandle, conversation_id: &str) -> Result<PathBuf, String> {
     let path = app
@@ -203,9 +215,8 @@ pub fn save_clipboard_image(
     build_attachment(&app, conversation_id, name, destination)
 }
 
-#[tauri::command]
-pub fn resolve_local_files(
-    project_path: String,
+fn project_local_files(
+    project_path: &str,
     candidates: Vec<String>,
 ) -> Result<Vec<LocalFile>, String> {
     let project = PathBuf::from(project_path);
@@ -232,6 +243,43 @@ pub fn resolve_local_files(
         });
     }
     Ok(files)
+}
+
+#[tauri::command]
+pub fn resolve_local_files(
+    app: AppHandle,
+    project_path: String,
+    candidates: Vec<String>,
+) -> Result<Vec<LocalFile>, String> {
+    let files = project_local_files(&project_path, candidates)?;
+    for file in &files {
+        if is_preview_image(Path::new(&file.path)) {
+            app.asset_protocol_scope()
+                .allow_file(&file.path)
+                .map_err(|error| format!("Could not prepare image preview: {error}"))?;
+        }
+    }
+    Ok(files)
+}
+
+fn resolve_project_html(project_path: &str, source_path: &str) -> Result<PathBuf, String> {
+    let path = resolve_project_file(Path::new(project_path), Path::new(source_path))?;
+    if !has_extension(&path, &["html", "htm"]) {
+        return Err("Only HTML files can be opened in the browser".into());
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+pub fn open_project_html(project_path: String, source_path: String) -> Result<(), String> {
+    let path = resolve_project_html(&project_path, &source_path)?;
+    platform::open_in_editor(&path.to_string_lossy(), None, "system")
+}
+
+#[tauri::command]
+pub fn reveal_project_file(project_path: String, source_path: String) -> Result<(), String> {
+    let path = resolve_project_file(Path::new(&project_path), Path::new(&source_path))?;
+    platform::reveal_path(&path.to_string_lossy())
 }
 
 #[tauri::command]
@@ -315,7 +363,10 @@ pub fn open_terminal(path: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_file, project_entries, read_project_file, resolve_project_file};
+    use super::{
+        download_file, is_preview_image, project_entries, project_local_files, read_project_file,
+        resolve_project_file, resolve_project_html,
+    };
     use std::{fs, path::Path};
     use uuid::Uuid;
 
@@ -333,6 +384,52 @@ mod tests {
         );
         assert!(resolve_project_file(&root, &outside).is_err());
         assert!(resolve_project_file(&root, Path::new("missing.md")).is_err());
+
+        fs::remove_file(outside).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn classifies_only_supported_raster_images_for_internal_preview() {
+        assert!(is_preview_image(Path::new("panel.PNG")));
+        assert!(is_preview_image(Path::new("photo.webp")));
+        assert!(!is_preview_image(Path::new("diagram.svg")));
+        assert!(!is_preview_image(Path::new("report.pdf")));
+    }
+
+    #[test]
+    fn resolves_local_files_and_rejects_html_outside_the_project() {
+        let root = std::env::temp_dir().join(format!("claude-desk-links-{}", Uuid::new_v4()));
+        let outside =
+            std::env::temp_dir().join(format!("claude-desk-outside-{}.html", Uuid::new_v4()));
+        fs::create_dir_all(root.join("exports")).unwrap();
+        fs::write(root.join("exports/panel.html"), "<h1>Preview</h1>").unwrap();
+        fs::write(root.join("exports/panel.png"), [0_u8, 1, 2]).unwrap();
+        fs::write(root.join("exports/report.pdf"), b"pdf").unwrap();
+        fs::write(&outside, "outside").unwrap();
+
+        let files = project_local_files(
+            root.to_string_lossy().as_ref(),
+            vec![
+                "./exports/panel.png".into(),
+                "./exports/panel.png".into(),
+                outside.to_string_lossy().to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "panel.png");
+        assert!(
+            resolve_project_html(root.to_string_lossy().as_ref(), "./exports/panel.html").is_ok()
+        );
+        assert!(
+            resolve_project_html(root.to_string_lossy().as_ref(), "./exports/report.pdf").is_err()
+        );
+        assert!(resolve_project_html(
+            root.to_string_lossy().as_ref(),
+            outside.to_string_lossy().as_ref()
+        )
+        .is_err());
 
         fs::remove_file(outside).unwrap();
         fs::remove_dir_all(root).unwrap();

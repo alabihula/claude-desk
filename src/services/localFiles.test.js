@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractLocalFileCandidates, extractProjectFileReferences, fileSelectionSnippet, fileSelectionsPrompt, formatFileSize, selectionLineRange } from './localFiles'
+import { extractLocalFileCandidates, extractProjectFileReferences, fileSelectionSnippet, fileSelectionsPrompt, formatFileSize, localProjectLink, projectFileOpenMode, selectionLineRange } from './localFiles'
 
 describe('local file references', () => {
   it('extracts only explicit local download links', () => {
@@ -26,6 +26,22 @@ describe('local file references', () => {
       '[再次下载](./exports/report.pdf)',
     ].join('\n')
     expect(extractLocalFileCandidates(content)).toEqual(['./exports/report.pdf'])
+  })
+
+  it('recognizes safe project links without treating remote or page links as files', () => {
+    const target = (href) => ({ closest: () => ({ getAttribute: () => href }) })
+    expect(localProjectLink(target('./exports/page%20preview.html'))).toBe('./exports/page preview.html')
+    expect(localProjectLink(target('https://example.com/report.pdf'))).toBeNull()
+    expect(localProjectLink(target('#details'))).toBeNull()
+  })
+
+  it('routes mainstream images and HTML while revealing unsupported deliverables', () => {
+    expect(projectFileOpenMode('SCREENSHOT.PNG')).toBe('image')
+    expect(projectFileOpenMode('preview.html')).toBe('html')
+    expect(projectFileOpenMode('src/App.vue')).toBe('text')
+    expect(projectFileOpenMode('README')).toBe('text')
+    expect(projectFileOpenMode('report.pdf')).toBe('reveal')
+    expect(projectFileOpenMode('archive.zip')).toBe('reveal')
   })
 
   it('formats compact file sizes', () => {

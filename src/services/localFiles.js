@@ -13,6 +13,33 @@ function isDownloadCandidate(value) {
     && !value.startsWith('#')
 }
 
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
+const HTML_EXTENSIONS = new Set(['html', 'htm'])
+const TEXT_EXTENSIONS = new Set([
+  'bash', 'c', 'cc', 'conf', 'config', 'cpp', 'cs', 'css', 'csv', 'env', 'fish', 'go',
+  'gql', 'graphql', 'h', 'hpp', 'ini', 'java', 'js', 'json', 'jsonc', 'jsx', 'kt', 'kts',
+  'less', 'log', 'lua', 'md', 'markdown', 'php', 'properties', 'py', 'rb', 'rs', 'sass',
+  'scss', 'sh', 'sql', 'svelte', 'swift', 'toml', 'ts', 'tsx', 'txt', 'vue', 'xml', 'yaml',
+  'yml', 'zsh',
+])
+const TEXT_FILENAMES = new Set(['dockerfile', 'license', 'makefile', 'readme'])
+
+export function localProjectLink(target) {
+  const href = target?.closest?.('a[href]')?.getAttribute('href')
+  if (!href) return null
+  const path = cleanPath(href)
+  return isDownloadCandidate(path) ? path : null
+}
+
+export function projectFileOpenMode(name = '') {
+  const filename = String(name).toLowerCase()
+  const extension = filename.includes('.') ? filename.split('.').pop() : ''
+  if (IMAGE_EXTENSIONS.has(extension)) return 'image'
+  if (HTML_EXTENSIONS.has(extension)) return 'html'
+  if (TEXT_EXTENSIONS.has(extension) || TEXT_FILENAMES.has(filename)) return 'text'
+  return 'reveal'
+}
+
 export function extractLocalFileCandidates(content = '') {
   const matches = []
   const add = (raw, index) => {

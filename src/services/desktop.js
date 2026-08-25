@@ -33,6 +33,8 @@ export const desktop = {
   listProjectDirectory: (projectPath, directory = '') => invoke('list_project_directory', { projectPath, directory }),
   readProjectFile: (projectPath, sourcePath) => invoke('read_project_file', { projectPath, sourcePath }),
   openInEditor: (path, line, editor) => invoke('open_in_editor', { path, line, editor }),
+  openProjectHtml: (projectPath, sourcePath) => invoke('open_project_html', { projectPath, sourcePath }),
+  revealProjectFile: (projectPath, sourcePath) => invoke('reveal_project_file', { projectPath, sourcePath }),
   revealPath: (path) => invoke('reveal_path', { path }),
   openTerminal: (path) => invoke('open_terminal', { path }),
   gitStatus: (projectPath) => invoke('git_status', { projectPath }),

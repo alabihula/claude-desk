@@ -31,6 +31,8 @@ vi.mock('../services/desktop', () => ({
     updateConversationRuntime: vi.fn(),
     readProjectFile: vi.fn(),
     openInEditor: vi.fn(),
+    openProjectHtml: vi.fn(),
+    revealProjectFile: vi.fn(),
   },
 }))
 
@@ -527,6 +529,20 @@ describe('workspace supplemental messages', () => {
 
     expect(desktop.openInEditor).toHaveBeenCalledWith('/tmp/project/src/main.js', 12, 'vscode')
     expect(desktop.readProjectFile).not.toHaveBeenCalled()
+  })
+
+  it('previews images, opens HTML in a browser, and reveals other deliverables', async () => {
+    const store = setupStore()
+
+    await store.openResolvedLocalFile({ name: 'panel.png', path: '/tmp/project/exports/panel.png', size: 42 })
+    expect(store.previewAttachment).toMatchObject({ kind: 'image', name: 'panel.png' })
+
+    await store.openResolvedLocalFile({ name: 'panel.html', path: '/tmp/project/exports/panel.html', size: 42 })
+    expect(desktop.openProjectHtml).toHaveBeenCalledWith('/tmp/project', '/tmp/project/exports/panel.html')
+
+    await store.openResolvedLocalFile({ name: 'report.pdf', path: '/tmp/project/exports/report.pdf', size: 42 })
+    expect(desktop.revealProjectFile).toHaveBeenCalledWith('/tmp/project', '/tmp/project/exports/report.pdf')
+    expect(desktop.openInEditor).not.toHaveBeenCalled()
   })
 
   it('keeps the current project selected when another project is removed', async () => {

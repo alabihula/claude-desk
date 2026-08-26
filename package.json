@@ -1,6 +1,6 @@
 {
   "name": "claude-desk",
-  "version": "0.1.39",
+  "version": "0.1.43",
   "private": true,
   "type": "module",
   "scripts": {

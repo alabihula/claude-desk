@@ -21,6 +21,8 @@ describe('persistent service runtime guidance', () => {
   it('defines an explicit Markdown contract for downloadable deliverables', () => {
     const prompt = withRuntimeGuidance('帮我生成一份 Excel 报告')
     expect(prompt).toContain('[下载报告](./exports/report.xlsx)')
+    expect(prompt).toContain('initial project working directory')
+    expect(prompt).toContain('Verify that exact linked path exists')
     expect(prompt).toContain('merely read, referenced, or edited')
   })
 })

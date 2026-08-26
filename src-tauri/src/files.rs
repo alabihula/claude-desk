@@ -4,8 +4,9 @@ use crate::{
 };
 use chrono::Utc;
 use std::{
+    collections::VecDeque,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -38,6 +39,8 @@ pub struct ProjectEntry {
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const PREVIEW_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+const MAX_LOCAL_FILE_PREFIX_DEPTH: usize = 2;
+const MAX_LOCAL_FILE_SEARCH_DIRECTORIES: usize = 4096;
 
 fn has_extension(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
@@ -94,6 +97,67 @@ fn resolve_project_file(project_path: &Path, candidate: &Path) -> Result<PathBuf
         return Err("Only files inside the active project can be accessed".into());
     }
     Ok(resolved)
+}
+
+fn is_safe_relative_candidate(candidate: &Path) -> bool {
+    !candidate.as_os_str().is_empty()
+        && !candidate.is_absolute()
+        && candidate
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
+fn resolve_unique_project_suffix(project_path: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    if !is_safe_relative_candidate(candidate) {
+        return Err("File no longer exists".into());
+    }
+
+    // Tool workspaces sometimes make a valid link relative to a nested project. Search only a
+    // small directory-prefix window and accept a result only when it is unique and still in scope.
+    let project = fs::canonicalize(project_path).map_err(|_| "Project directory is unavailable")?;
+    let mut directories = VecDeque::from([(project.clone(), 0_usize)]);
+    let mut visited = 0_usize;
+    let mut match_path = None;
+
+    while let Some((directory, depth)) = directories.pop_front() {
+        if depth > 0 {
+            if let Ok(path) = resolve_project_file(&project, &directory.join(candidate)) {
+                if match_path
+                    .as_ref()
+                    .is_some_and(|existing| existing != &path)
+                {
+                    return Err("Local file path is ambiguous".into());
+                }
+                match_path = Some(path);
+            }
+        }
+        if depth == MAX_LOCAL_FILE_PREFIX_DEPTH {
+            continue;
+        }
+
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if visited >= MAX_LOCAL_FILE_SEARCH_DIRECTORIES {
+                return Err("Local file search limit reached".into());
+            }
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                visited += 1;
+                directories.push_back((entry.path(), depth + 1));
+            }
+        }
+    }
+
+    match_path.ok_or_else(|| "File no longer exists".into())
+}
+
+fn resolve_local_file(project_path: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    resolve_project_file(project_path, candidate)
+        .or_else(|_| resolve_unique_project_suffix(project_path, candidate))
 }
 
 fn resolve_project_directory(project_path: &Path, candidate: &Path) -> Result<PathBuf, String> {
@@ -222,7 +286,7 @@ fn project_local_files(
     let project = PathBuf::from(project_path);
     let mut files = Vec::new();
     for candidate in candidates.into_iter().take(20) {
-        let Ok(path) = resolve_project_file(&project, Path::new(&candidate)) else {
+        let Ok(path) = resolve_local_file(&project, Path::new(&candidate)) else {
             continue;
         };
         if files
@@ -365,7 +429,7 @@ pub fn open_terminal(path: String) -> Result<(), String> {
 mod tests {
     use super::{
         download_file, is_preview_image, project_entries, project_local_files, read_project_file,
-        resolve_project_file, resolve_project_html,
+        resolve_local_file, resolve_project_file, resolve_project_html,
     };
     use std::{fs, path::Path};
     use uuid::Uuid;
@@ -432,6 +496,50 @@ mod tests {
         .is_err());
 
         fs::remove_file(outside).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uniquely_recovers_a_nested_project_relative_link() {
+        let root = std::env::temp_dir().join(format!("claude-desk-nested-{}", Uuid::new_v4()));
+        let nested = root.join("workspace/figma-mcp-front/exports");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("panel.png"), [0_u8, 1, 2]).unwrap();
+
+        assert_eq!(
+            resolve_local_file(&root, Path::new("./exports/panel.png")).unwrap(),
+            fs::canonicalize(nested.join("panel.png")).unwrap()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn never_guesses_between_ambiguous_nested_links() {
+        let root = std::env::temp_dir().join(format!("claude-desk-ambiguous-{}", Uuid::new_v4()));
+        for directory in ["workspace/app-one/exports", "projects/app-two/exports"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+            fs::write(root.join(directory).join("panel.png"), [0_u8]).unwrap();
+        }
+
+        assert!(resolve_local_file(&root, Path::new("./exports/panel.png")).is_err());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exact_local_link_wins_over_nested_suffix_matches() {
+        let root = std::env::temp_dir().join(format!("claude-desk-exact-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("exports")).unwrap();
+        fs::create_dir_all(root.join("workspace/app/exports")).unwrap();
+        fs::write(root.join("exports/panel.png"), [0_u8]).unwrap();
+        fs::write(root.join("workspace/app/exports/panel.png"), [1_u8]).unwrap();
+
+        assert_eq!(
+            resolve_local_file(&root, Path::new("./exports/panel.png")).unwrap(),
+            fs::canonicalize(root.join("exports/panel.png")).unwrap()
+        );
+
         fs::remove_dir_all(root).unwrap();
     }
 

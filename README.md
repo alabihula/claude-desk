@@ -29,6 +29,32 @@ Claude Code 的结构化运行时能力很强，但日常桌面使用还需要�
 
 更完整的产品边界与实现背景见 [`CLAUDE_DESK_SPEC.md`](CLAUDE_DESK_SPEC.md) 和 [`CLAUDE_DESK_ROADMAP.md`](CLAUDE_DESK_ROADMAP.md)。
 
+## 界面与典型场景
+
+### 结构化任务进度
+
+将 Claude Code 的任务清单和执行状态呈现为原生进度界面，长任务的当前阶段与完成情况一目了然。
+
+![Claude Desk 结构化任务进度](screenshots/task-progress.jpg)
+
+### 项目文件浏览
+
+在对话旁直接浏览和预览项目文件，便于核对上下文、定位产物，并把选中的内容继续交给 Claude。
+
+![Claude Desk 项目文件浏览](screenshots/file-browser.jpg)
+
+### Git 变更审查
+
+集中查看新增和修改文件，并在 App 内审阅 Diff，再决定是否提交和推送。
+
+![Claude Desk Git 变更审查](screenshots/git-diff.jpg)
+
+### 上下文与桌面偏好
+
+集中管理自动压缩、压缩阈值、界面语言、对话密度和代码链接打开方式，设置从下一条消息起生效。
+
+![Claude Desk 上下文与桌面偏好](screenshots/context-settings.jpg)
+
 ## 使用前提
 
 - 已安装并能够在终端运行 [`claude`](https://code.claude.com/docs/en/overview)。

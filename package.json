@@ -2,6 +2,15 @@
   "name": "claude-desk",
   "version": "0.1.43",
   "private": true,
+  "description": "An unofficial, native desktop client for Claude Code.",
+  "license": "MIT",
+  "author": "alabihula",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alabihula/claude-desk.git"
+  },
+  "homepage": "https://github.com/alabihula/claude-desk#readme",
+  "bugs": "https://github.com/alabihula/claude-desk/issues",
   "type": "module",
   "scripts": {
     "dev": "vite",

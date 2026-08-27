@@ -4,6 +4,9 @@ version = "0.1.43"
 description = "A focused desktop client for Claude Code"
 authors = ["Claude Desk"]
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/alabihula/claude-desk"
+homepage = "https://github.com/alabihula/claude-desk"
 
 [lib]
 name = "claude_desk_lib"

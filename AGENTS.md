@@ -68,15 +68,15 @@ Run checks proportional to the change. Product-source changes normally require a
 ```bash
 pnpm test
 pnpm build
-/Users/xing.min/.cargo/bin/cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-/Users/xing.min/.cargo/bin/cargo test --manifest-path src-tauri/Cargo.toml
-/Users/xing.min/.cargo/bin/cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 git diff --check
 ```
 
 For interaction changes, also exercise the packaged App rather than relying only on Vite or unit tests. Verify success, cancellation, missing/stale data, repeated actions, and one adversarial boundary. Report what was executed separately from static inference.
 
-Windows process or packaging changes require the private Windows workflow in addition to local checks. Do not declare them fixed from macOS compilation or code inspection alone. The Windows evidence must include:
+Windows process or packaging changes require the Windows workflow in addition to local checks. Do not declare them fixed from macOS compilation or code inspection alone. The Windows evidence must include:
 
 - the Windows-only background-process test proving the child sees `GetConsoleWindow() == null`;
 - frontend and Rust tests, including Git status/environment behavior and refresh coalescing;
@@ -99,12 +99,12 @@ Keep the version synchronized in:
 Build the macOS installer with:
 
 ```bash
-PATH=/Users/xing.min/.cargo/bin:$PATH pnpm tauri build
+pnpm tauri build
 ```
 
 The DMG is written to `src-tauri/target/release/bundle/dmg/`. Verify its bundle version and signature structure before handoff. Current local builds are ad-hoc signed and not Apple-notarized, so do not claim otherwise.
 
-The internal Windows x64 installer is built by `.github/workflows/windows-build.yml` on a Windows runner and uploaded as a private workflow artifact. It is unsigned, so report the expected Windows “Unknown publisher” warning rather than claiming production signing.
+The Windows x64 installer is built by `.github/workflows/windows-build.yml` on a Windows runner and uploaded as a workflow artifact. It is unsigned, so report the expected Windows “Unknown publisher” warning rather than claiming production signing.
 
 Windows release safety baseline:
 
@@ -113,4 +113,4 @@ Windows release safety baseline:
 - `0.1.22` is the first colleague-accepted baseline covering the complete background-process boundary. Future Windows releases must preserve its lifecycle tests and pass the workflow above before handoff.
 - Replacing an installer is not sufficient evidence. Record the workflow run, artifact SHA-256, commit SHA, and the specific packaged lifecycle paths exercised.
 
-The GitHub repository remains private until the owner explicitly opens it. Scan for secrets before commits, keep `main` deployable, and confirm the remote commit SHA after pushing. If GitHub HTTPS negotiation stalls in this environment, use `git -c http.version=HTTP/1.1 push origin main`.
+The GitHub repository is public. Scan for secrets before commits, keep `main` deployable, and confirm the remote commit SHA after pushing. If GitHub HTTPS negotiation stalls in this environment, use `git -c http.version=HTTP/1.1 push origin main`.

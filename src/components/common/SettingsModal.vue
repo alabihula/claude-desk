@@ -48,6 +48,16 @@ function changeProfile({ profileId, changes }) {
   profiles.value = updateConnectionProfile(profiles.value, profileId, changes)
 }
 
+function blurFormControl(event) {
+  if (!(event.target instanceof Element)) return
+  if (event.target.closest('input, textarea, select, button, a, .toggle-row, [contenteditable="true"]')) return
+  // Labels wrap the full settings grid cell, so cancel their implicit control
+  // activation when the user clicks descriptive text or surrounding whitespace.
+  event.preventDefault()
+  const focused = document.activeElement
+  if (focused instanceof HTMLElement && focused.closest('.settings-modal')) focused.blur()
+}
+
 function reset() {
   mode.value = store.claudeSettingsError ? 'json' : 'visual'
   jsonText.value = store.claudeSettingsContent
@@ -147,7 +157,7 @@ async function save() {
         <button :class="{ active: mode === 'visual' }" @click="selectMode('visual')"><SlidersHorizontal :size="15" /> {{ t('settings.visual') }}</button>
         <button :class="{ active: mode === 'json' }" @click="selectMode('json')"><Code2 :size="15" /> JSON</button>
       </div>
-      <div class="settings-body">
+      <div class="settings-body" @click="blurFormControl">
         <template v-if="mode === 'visual'">
           <section class="settings-section connection-section">
             <div class="settings-heading"><h3>{{ t('settings.connection') }}</h3><p>{{ t('settings.connectionHelp') }}</p></div>

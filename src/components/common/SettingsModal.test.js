@@ -78,6 +78,17 @@ describe('SettingsModal', () => {
     }))
   })
 
+  it('blurs an input when clicking non-control content in the settings body', async () => {
+    const baseUrl = root.querySelector('[placeholder="https://api.anthropic.com"]')
+    baseUrl.focus()
+    expect(document.activeElement).toBe(baseUrl)
+
+    root.querySelector('.connection-base-url > span').click()
+    await nextTick()
+
+    expect(document.activeElement).not.toBe(baseUrl)
+  })
+
   it('creates, renames, and activates an additional Claude connection profile', async () => {
     store.saveConfiguration = vi.fn(async () => {})
     root.querySelector('[title="Add connection profile"]').click()

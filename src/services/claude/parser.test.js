@@ -75,6 +75,32 @@ describe('parseClaudeEvent', () => {
     })).toEqual([{ type: 'compact-result', success: false, error: 'Not enough messages to compact.' }])
   })
 
+  it('reports the MCP servers and tools loaded by the same Claude run', () => {
+    const events = parseClaudeEvent({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'session-1',
+      tools: ['Read', 'mcp__figma-mcp-front__get_design', 'mcp__codegraph__search', 'mcp__codegraph__read'],
+      mcp_servers: [
+        { name: 'figma-mcp-front', status: 'connected' },
+        { name: 'codegraph', status: 'connected' },
+        { name: 'unavailable', status: 'failed' },
+      ],
+    })
+
+    expect(events).toContainEqual({
+      type: 'mcp-runtime',
+      runtime: {
+        toolCount: 3,
+        servers: [
+          { name: 'figma-mcp-front', status: 'connected', toolCount: 1 },
+          { name: 'codegraph', status: 'connected', toolCount: 2 },
+          { name: 'unavailable', status: 'failed', toolCount: 0 },
+        ],
+      },
+    })
+  })
+
   it('surfaces permission denials for an actionable UI', () => {
     const [result] = parseClaudeEvent({ type: 'result', result: 'Blocked', permission_denials: [{ tool_name: 'Read' }] })
     expect(result.permissionDenials).toEqual([{ tool_name: 'Read' }])

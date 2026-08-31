@@ -77,6 +77,7 @@ function newRun(operation = 'chat', context = null) {
     permissionDenied: false,
     diagnosticKind: '',
     compactResult: operation === 'compact' ? 'pending' : '',
+    mcpRuntime: null,
     context: context ? { ...context } : { tokens: 0, window: 0, measured: false },
   }
 }
@@ -108,6 +109,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     claudeSettingsPath: '',
     claudeSettingsError: '',
     contextStats: {},
+    mcpRuntimeByConversation: {},
     health: null,
     runs: {},
     queuedMessages: {},
@@ -394,6 +396,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       delete this.drafts[conversation.id]
       delete this.attachmentDrafts[conversation.id]
       delete this.snippetDrafts[conversation.id]
+      delete this.mcpRuntimeByConversation[conversation.id]
       if (this.activeConversationId === conversation.id) {
         this.activeConversationId = null
         if (this.conversations[0]) await this.selectConversation(this.conversations[0].id)
@@ -471,6 +474,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       this.runs[queued.conversationId] = newRun('chat', this.contextStats[queued.conversationId])
+      delete this.mcpRuntimeByConversation[queued.conversationId]
       try {
         const runId = await desktop.sendClaude({
           conversationId: queued.conversationId,
@@ -622,6 +626,10 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (event.type === 'text') { run.content += event.text; run.sawPartialText = true }
           if (event.type === 'full-text' && !run.sawPartialText && !run.content) run.content = event.text
           if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
+          if (event.type === 'mcp-runtime') {
+            run.mcpRuntime = { ...event.runtime, runId: payload.runId }
+            this.mcpRuntimeByConversation[payload.conversationId] = run.mcpRuntime
+          }
           if (event.type === 'result') {
             run.receivedResult = true
             run.resultValueType = event.valueType
@@ -850,6 +858,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const hasHistory = this.activeMessages.some((message) => message.role === 'user')
       if (!conversation || !project || !hasHistory || this.runs[conversation.id]) return
       this.runs[conversation.id] = newRun('compact', this.contextStats[conversation.id])
+      delete this.mcpRuntimeByConversation[conversation.id]
       try {
         const runId = await desktop.sendClaude({
           conversationId: conversation.id,

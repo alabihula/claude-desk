@@ -1,21 +1,49 @@
 <script setup>
+import { computed } from 'vue'
 import { AlertTriangle, Plug, RefreshCw, Server, X } from 'lucide-vue-next'
 import { useI18n } from '../../services/i18n'
 
-defineProps({
+const props = defineProps({
   servers: { type: Array, default: () => [] },
+  runtime: { type: Object, default: null },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
 })
 defineEmits(['close', 'refresh'])
 const { t } = useI18n()
+
+const runtimeByName = computed(() => new Map((props.runtime?.servers || []).map((server) => [server.name, server])))
+const rows = computed(() => {
+  const configuredNames = new Set(props.servers.map((server) => server.name))
+  return [
+    ...props.servers,
+    ...(props.runtime?.servers || [])
+      .filter((server) => !configuredNames.has(server.name))
+      .map((server) => ({ ...server, detail: '', status: 'unknown', message: '' })),
+  ]
+})
+const runtimeIssues = computed(() => props.runtime
+  ? props.servers.filter((server) => {
+    const current = runtimeByName.value.get(server.name)
+    return !current || current.toolCount === 0 || /fail|disconnect|error/i.test(current.status)
+  }).length
+  : 0)
+
+function runtimeLabel(name) {
+  if (!props.runtime) return ''
+  const current = runtimeByName.value.get(name)
+  if (!current) return t('mcp.runtimeMissing')
+  if (/fail|disconnect|error/i.test(current.status)) return t('mcp.runtimeFailed', { status: current.status })
+  if (!current.toolCount) return t('mcp.runtimeNoTools', { status: current.status })
+  return t('mcp.runtimeTools', { count: current.toolCount })
+}
 </script>
 
 <template>
   <section class="mcp-server-panel" role="dialog" aria-modal="false" :aria-label="t('mcp.title')">
     <header>
       <span><Plug :size="16" /><strong>{{ t('mcp.title') }}</strong></span>
-      <small>{{ t('mcp.subtitle') }}</small>
+      <small>{{ runtime ? t('mcp.runtimeSummary', { count: runtime.toolCount }) : t('mcp.subtitle') }}</small>
       <button :disabled="loading" :title="t('mcp.refresh')" @click="$emit('refresh')"><RefreshCw :size="14" :class="{ spinning: loading }" /></button>
       <button :title="t('common.close')" @click="$emit('close')"><X :size="15" /></button>
     </header>
@@ -31,17 +59,19 @@ const { t } = useI18n()
       <small>{{ error }}</small>
       <button @click="$emit('refresh')">{{ t('common.retry') }}</button>
     </div>
-    <div v-else-if="!servers.length" class="mcp-panel-state">
+    <div v-else-if="!rows.length" class="mcp-panel-state">
       <Plug :size="21" />
       <strong>{{ t('mcp.empty') }}</strong>
       <small>{{ t('mcp.emptyHelp') }}</small>
     </div>
     <div v-else class="mcp-server-list" role="list">
-      <article v-for="server in servers" :key="server.name" role="listitem">
+      <div v-if="runtimeIssues" class="mcp-runtime-warning"><AlertTriangle :size="15" /><span>{{ t('mcp.runtimeWarning', { count: runtimeIssues }) }}</span></div>
+      <article v-for="server in rows" :key="server.name" role="listitem">
         <Server :size="16" />
         <span>
           <strong>{{ server.name }}</strong>
           <small :title="server.message || server.detail">{{ server.detail || server.message || t('mcp.noDetails') }}</small>
+          <small v-if="runtime" class="mcp-runtime-detail" :class="{ missing: !runtimeByName.get(server.name)?.toolCount }">{{ runtimeLabel(server.name) }}</small>
         </span>
         <em :class="`status-${server.status}`">{{ t(`mcp.status.${server.status}`) }}</em>
       </article>

@@ -228,6 +228,26 @@ describe('workspace supplemental messages', () => {
     expect(store.activeMessages).not.toContainEqual(expect.objectContaining({ role: 'system' }))
   })
 
+  it('keeps the same-run MCP inventory available for the MCP panel', () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-current', kind: 'stream',
+      data: {
+        type: 'system', subtype: 'init', session_id: 'session-1',
+        tools: ['Read', 'mcp__figma-mcp-front__get_design'],
+        mcp_servers: [{ name: 'figma-mcp-front', status: 'connected' }],
+      },
+    })
+
+    expect(store.mcpRuntimeByConversation['conversation-1']).toEqual({
+      runId: 'run-current',
+      toolCount: 1,
+      servers: [{ name: 'figma-mcp-front', status: 'connected', toolCount: 1 }],
+    })
+  })
+
   it('keeps Task tool progress in a live checklist instead of raw activity rows', () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()

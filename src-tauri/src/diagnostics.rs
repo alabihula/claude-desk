@@ -11,6 +11,14 @@ const MAX_STDERR_LINES: usize = 40;
 const MAX_LINE_CHARS: usize = 800;
 const MAX_RUNS_PER_CONVERSATION: usize = 20;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpServerSummary {
+    name: String,
+    status: String,
+    tool_count: u64,
+}
+
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamSummary {
@@ -37,6 +45,8 @@ pub struct StreamSummary {
     compact_error: Option<String>,
     claude_code_version: Option<String>,
     resolved_model: Option<String>,
+    mcp_servers: Vec<McpServerSummary>,
+    mcp_tool_count: u64,
     other_event_types: Vec<String>,
 }
 
@@ -78,7 +88,7 @@ pub struct RunContext<'a> {
 impl RunDiagnostics {
     pub fn new(app: &AppHandle, context: RunContext<'_>) -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             app_version: app.package_info().version.to_string(),
             platform: std::env::consts::OS,
             architecture: std::env::consts::ARCH,
@@ -205,6 +215,38 @@ impl RunDiagnostics {
                     .get("model")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+                let tools = payload
+                    .get("tools")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .filter(|tool| tool.starts_with("mcp__"))
+                    .collect::<Vec<_>>();
+                self.stream.mcp_tool_count = tools.len() as u64;
+                self.stream.mcp_servers = payload
+                    .get("mcp_servers")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|server| {
+                        let name = server.get("name")?.as_str()?;
+                        let prefix = format!("mcp__{name}__");
+                        Some(McpServerSummary {
+                            name: redact_line(name),
+                            status: redact_line(
+                                server
+                                    .get("status")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("unknown"),
+                            ),
+                            tool_count: tools
+                                .iter()
+                                .filter(|tool| tool.starts_with(&prefix))
+                                .count() as u64,
+                        })
+                    })
+                    .collect();
             }
             Some("status") if payload.get("compact_result").is_some() => {
                 self.stream.compact_result = payload
@@ -422,7 +464,18 @@ mod tests {
         };
         diagnostics.observe_stdout(
             "init",
-            &json!({ "type": "system", "subtype": "init", "claude_code_version": "2.1.224", "model": "claude-sonnet-5[1m]" }),
+            &json!({
+                "type": "system",
+                "subtype": "init",
+                "claude_code_version": "2.1.224",
+                "model": "claude-sonnet-5[1m]",
+                "tools": ["Read", "mcp__figma-mcp-front__get_design", "mcp__codegraph__search"],
+                "mcp_servers": [
+                    { "name": "figma-mcp-front", "status": "connected" },
+                    { "name": "codegraph", "status": "connected" },
+                    { "name": "missing", "status": "failed" }
+                ]
+            }),
             true,
         );
         diagnostics.observe_stdout(
@@ -440,6 +493,10 @@ mod tests {
         assert_eq!(value["operation"], "compact");
         assert_eq!(value["stream"]["claudeCodeVersion"], "2.1.224");
         assert_eq!(value["stream"]["resolvedModel"], "claude-sonnet-5[1m]");
+        assert_eq!(value["stream"]["mcpToolCount"], 2);
+        assert_eq!(value["stream"]["mcpServers"][0]["name"], "figma-mcp-front");
+        assert_eq!(value["stream"]["mcpServers"][0]["toolCount"], 1);
+        assert_eq!(value["stream"]["mcpServers"][2]["status"], "failed");
         assert_eq!(value["stream"]["compactResult"], "failed");
         assert_eq!(value["stream"]["resultNumTurns"], 0);
     }

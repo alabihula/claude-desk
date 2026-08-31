@@ -1,9 +1,69 @@
-name: Windows x64 build
+name: Desktop installers
 
 on:
   workflow_dispatch:
 
 jobs:
+  build-macos-universal:
+    runs-on: macos-14
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          shared-key: macos-universal
+          cache-on-failure: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Test Rust backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build universal macOS DMG
+        run: pnpm tauri build --target universal-apple-darwin --bundles dmg
+
+      - name: Verify macOS bundle
+        shell: bash
+        run: |
+          dmg="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)"
+          mount="$(mktemp -d /tmp/claude-desk-dmg.XXXXXX)"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg" >/dev/null
+          trap 'hdiutil detach "$mount" >/dev/null; rmdir "$mount"' EXIT
+          app="$mount/Claude Desk.app"
+          expected="$(node -p "require('./package.json').version")"
+          actual="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          test "$actual" = "$expected"
+          codesign --verify --deep --strict "$app"
+          file "$app/Contents/MacOS/claude-desk" | grep -q 'universal binary'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-desk-macos-universal
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
   build-windows-x64:
     runs-on: windows-2022
     permissions:

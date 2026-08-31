@@ -308,9 +308,15 @@ describe('ChatComposer attachments', () => {
     store.activeProjectId = 'project-1'
     store.activeConversationId = 'conversation-1'
     store.sendMessage = vi.fn()
-    desktop.listMcpServers.mockResolvedValue([{
-      name: 'filesystem', detail: 'node server.js /tmp', status: 'connected', message: '',
-    }])
+    desktop.listMcpServers.mockResolvedValue([
+      { name: 'filesystem', detail: 'node server.js /tmp', status: 'connected', message: '' },
+      { name: 'figma-mcp-front', detail: 'figma-mcp-front -mode mcp', status: 'connected', message: '' },
+    ])
+    store.mcpRuntimeByConversation['conversation-1'] = {
+      runId: 'run-1',
+      toolCount: 2,
+      servers: [{ name: 'filesystem', status: 'connected', toolCount: 2 }],
+    }
     desktop.listClaudeSkills.mockResolvedValue([{
       name: 'aliyun-observability',
       description: 'Configure an MCP endpoint',
@@ -338,6 +344,9 @@ describe('ChatComposer attachments', () => {
     expect(desktop.listMcpServers).toHaveBeenCalledWith('/tmp/project', 'claude', {})
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('filesystem')
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Connected')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Latest run: 2 tools available')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('figma-mcp-front')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Latest run: server was not loaded')
     expect(store.sendMessage).not.toHaveBeenCalled()
 
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))

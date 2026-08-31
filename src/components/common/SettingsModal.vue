@@ -1,26 +1,52 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
-import { CheckCircle2, Code2, Eye, EyeOff, RefreshCw, SlidersHorizontal, X, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, Code2, RefreshCw, SlidersHorizontal, X, XCircle } from 'lucide-vue-next'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { applyVisualClaudeSettings, visualFromClaudeSettings } from '../../services/claude/settings'
+import {
+  activeConnectionProfile,
+  connectionProfileSettings,
+  normalizeConnectionProfiles,
+  updateConnectionProfile,
+} from '../../services/claude/connectionProfiles'
 import { desktop } from '../../services/desktop'
 import { useI18n } from '../../services/i18n'
 import { normalizeConversationDensity } from '../../services/displaySettings'
+import ConnectionProfilesEditor from './ConnectionProfilesEditor.vue'
 
 const store = useWorkspaceStore()
 const { t } = useI18n()
 const mode = ref('visual')
-const showToken = ref(false)
 const jsonText = ref('{}\n')
 const jsonError = ref('')
 const formError = ref('')
 const saving = ref(false)
 const workingConfig = ref({})
+const profiles = ref([])
+const activeProfileId = ref('')
 const form = reactive({
-  baseUrl: '', token: '', model: '', autoCompact: true, compactThreshold: 'default', contextWindow: '',
+  autoCompact: true, compactThreshold: 'default', contextWindow: '',
   theme: 'system', editor: 'vscode', language: 'en', conversationDensity: 'comfortable',
 })
+
+function activeVisual() {
+  return { ...form, ...(activeConnectionProfile(profiles.value, activeProfileId.value) || {}) }
+}
+
+function reconcileActiveProfile(settings) {
+  const visual = visualFromClaudeSettings(settings, store.settings)
+  profiles.value = updateConnectionProfile(profiles.value, activeProfileId.value, {
+    baseUrl: visual.baseUrl,
+    token: visual.token,
+    model: visual.model,
+  })
+  Object.assign(form, visual)
+}
+
+function changeProfile({ profileId, changes }) {
+  profiles.value = updateConnectionProfile(profiles.value, profileId, changes)
+}
 
 function reset() {
   mode.value = store.claudeSettingsError ? 'json' : 'visual'
@@ -28,7 +54,11 @@ function reset() {
   jsonError.value = store.claudeSettingsError
   formError.value = ''
   workingConfig.value = JSON.parse(JSON.stringify(store.claudeSettings || {}))
-  Object.assign(form, visualFromClaudeSettings(workingConfig.value, store.settings), {
+  const visual = visualFromClaudeSettings(workingConfig.value, store.settings)
+  const connections = normalizeConnectionProfiles(store.settings, visual, t('settings.defaultConnection'))
+  profiles.value = connections.profiles
+  activeProfileId.value = connections.activeId
+  Object.assign(form, visual, {
     theme: store.settings.theme,
     editor: store.settings.editor,
     language: store.settings.language,
@@ -52,14 +82,14 @@ function parseJson() {
 
 function selectMode(nextMode) {
   if (nextMode === 'json' && mode.value === 'visual') {
-    workingConfig.value = applyVisualClaudeSettings(workingConfig.value, form)
+    workingConfig.value = applyVisualClaudeSettings(workingConfig.value, activeVisual())
     jsonText.value = JSON.stringify(workingConfig.value, null, 2)
   }
   if (nextMode === 'visual' && mode.value === 'json') {
     const parsed = parseJson()
     if (!parsed) return
     workingConfig.value = parsed
-    Object.assign(form, visualFromClaudeSettings(parsed, store.settings))
+    reconcileActiveProfile(parsed)
   }
   mode.value = nextMode
 }
@@ -83,15 +113,18 @@ async function save() {
   try {
     const parsed = mode.value === 'json' ? parseJson() : workingConfig.value
     if (!parsed) return
+    if (mode.value === 'json') reconcileActiveProfile(parsed)
     const content = mode.value === 'json'
       ? JSON.stringify(parsed, null, 2)
-      : JSON.stringify(applyVisualClaudeSettings(parsed, form), null, 2)
+      : JSON.stringify(applyVisualClaudeSettings(parsed, activeVisual()), null, 2)
+    const connectionSettings = connectionProfileSettings(profiles.value, activeProfileId.value)
     const restartRequired = store.languageRestartRequired
     await store.saveConfiguration(content, {
       theme: form.theme,
       editor: form.editor,
       language: form.language,
       conversationDensity: form.conversationDensity,
+      ...connectionSettings,
     })
     if (restartRequired && await confirm(t('settings.languageRestartBody'), {
       title: t('settings.languageRestartTitle'),
@@ -118,9 +151,7 @@ async function save() {
         <template v-if="mode === 'visual'">
           <section class="settings-section connection-section">
             <div class="settings-heading"><h3>{{ t('settings.connection') }}</h3><p>{{ t('settings.connectionHelp') }}</p></div>
-            <label>{{ t('settings.baseUrl') }} <span>{{ t('settings.baseUrlHelp') }}</span><input v-model="form.baseUrl" spellcheck="false" placeholder="https://api.anthropic.com" /></label>
-            <label>{{ t('settings.token') }} <span>{{ t('settings.tokenHelp') }}</span><div class="secret-input"><input v-model="form.token" :type="showToken ? 'text' : 'password'" spellcheck="false" placeholder="Token" /><button type="button" :title="t(showToken ? 'settings.hideToken' : 'settings.showToken')" @click="showToken = !showToken"><EyeOff v-if="showToken" :size="16" /><Eye v-else :size="16" /></button></div></label>
-            <label>{{ t('settings.model') }} <span>{{ t('settings.modelHelp') }}</span><input v-model="form.model" spellcheck="false" placeholder="sonnet or kimi-latest" /></label>
+            <ConnectionProfilesEditor v-model:profiles="profiles" v-model:active-id="activeProfileId" @change-profile="changeProfile" />
           </section>
 
           <section class="settings-section context-settings">

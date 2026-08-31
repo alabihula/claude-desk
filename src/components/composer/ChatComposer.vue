@@ -313,6 +313,7 @@ onBeforeUnmount(() => {
       <div v-if="mcpPanelOpen" ref="mcpPanelRoot" class="mcp-panel-anchor">
         <McpServerPanel
           :servers="mcpServers"
+          :runtime="store.mcpRuntimeByConversation[store.activeConversationId] || null"
           :loading="mcpLoading"
           :error="mcpError"
           @refresh="loadMcpServers"

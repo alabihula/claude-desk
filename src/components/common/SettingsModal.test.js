@@ -77,4 +77,25 @@ describe('SettingsModal', () => {
       conversationDensity: 'compact',
     }))
   })
+
+  it('creates, renames, and activates an additional Claude connection profile', async () => {
+    store.saveConfiguration = vi.fn(async () => {})
+    root.querySelector('[title="Add connection profile"]').click()
+    await nextTick()
+
+    const name = root.querySelector('[data-testid="connection-profile-name"]')
+    name.value = 'Backup token'
+    name.dispatchEvent(new Event('input'))
+    const token = root.querySelector('.connection-section .secret-input input')
+    token.value = 'backup-secret'
+    token.dispatchEvent(new Event('input'))
+    root.querySelector('footer .primary-button').click()
+
+    await vi.waitFor(() => expect(store.saveConfiguration).toHaveBeenCalled())
+    const [, settings] = store.saveConfiguration.mock.calls[0]
+    expect(settings.connectionProfiles).toHaveLength(2)
+    expect(settings.connectionProfiles.find((profile) => profile.id === settings.activeConnectionProfileId)).toMatchObject({
+      name: 'Backup token', token: 'backup-secret',
+    })
+  })
 })

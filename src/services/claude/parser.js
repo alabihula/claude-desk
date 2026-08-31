@@ -49,12 +49,30 @@ function valueType(value) {
   return typeof value
 }
 
+function mcpRuntime(payload) {
+  const tools = Array.isArray(payload.tools)
+    ? payload.tools.filter((tool) => typeof tool === 'string' && tool.startsWith('mcp__'))
+    : []
+  const servers = Array.isArray(payload.mcp_servers) ? payload.mcp_servers : []
+  return {
+    toolCount: tools.length,
+    servers: servers
+      .filter((server) => server && typeof server.name === 'string')
+      .map((server) => ({
+        name: server.name,
+        status: String(server.status || 'unknown'),
+        toolCount: tools.filter((tool) => tool.startsWith(`mcp__${server.name}__`)).length,
+      })),
+  }
+}
+
 export function parseClaudeEvent(payload) {
   if (!payload || typeof payload !== 'object') return []
   const events = []
 
   if (payload.type === 'system' && payload.subtype === 'init') {
     events.push({ type: 'session', sessionId: payload.session_id })
+    events.push({ type: 'mcp-runtime', runtime: mcpRuntime(payload) })
   }
 
   if (payload.type === 'system' && payload.subtype === 'status' && payload.compact_result) {

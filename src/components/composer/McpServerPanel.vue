@@ -7,18 +7,19 @@ const props = defineProps({
   servers: { type: Array, default: () => [] },
   runtime: { type: Object, default: null },
   loading: { type: Boolean, default: false },
+  retryingName: { type: String, default: '' },
   error: { type: String, default: '' },
 })
-defineEmits(['close', 'refresh'])
+defineEmits(['close', 'refresh', 'retry'])
 const { t } = useI18n()
 
 const runtimeByName = computed(() => new Map((props.runtime?.servers || []).map((server) => [server.name, server])))
+const configuredNames = computed(() => new Set(props.servers.map((server) => server.name)))
 const rows = computed(() => {
-  const configuredNames = new Set(props.servers.map((server) => server.name))
   return [
     ...props.servers,
     ...(props.runtime?.servers || [])
-      .filter((server) => !configuredNames.has(server.name))
+      .filter((server) => !configuredNames.value.has(server.name))
       .map((server) => ({ ...server, detail: '', status: 'unknown', message: '' })),
   ]
 })
@@ -37,6 +38,15 @@ function runtimeLabel(name) {
   if (!current.toolCount) return t('mcp.runtimeNoTools', { status: current.status })
   return t('mcp.runtimeTools', { count: current.toolCount })
 }
+
+function retryable(server) {
+  return configuredNames.value.has(server.name) && ['failed', 'unknown'].includes(server.status)
+}
+
+function serverDescription(server) {
+  if (retryable(server) && server.message) return server.message
+  return server.detail || server.message || t('mcp.noDetails')
+}
 </script>
 
 <template>
@@ -44,7 +54,7 @@ function runtimeLabel(name) {
     <header>
       <span><Plug :size="16" /><strong>{{ t('mcp.title') }}</strong></span>
       <small>{{ runtime ? t('mcp.runtimeSummary', { count: runtime.toolCount }) : t('mcp.subtitle') }}</small>
-      <button :disabled="loading" :title="t('mcp.refresh')" @click="$emit('refresh')"><RefreshCw :size="14" :class="{ spinning: loading }" /></button>
+      <button :disabled="loading || retryingName" :title="t('mcp.refresh')" @click="$emit('refresh')"><RefreshCw :size="14" :class="{ spinning: loading }" /></button>
       <button :title="t('common.close')" @click="$emit('close')"><X :size="15" /></button>
     </header>
 
@@ -70,10 +80,23 @@ function runtimeLabel(name) {
         <Server :size="16" />
         <span>
           <strong>{{ server.name }}</strong>
-          <small :title="server.message || server.detail">{{ server.detail || server.message || t('mcp.noDetails') }}</small>
+          <small :title="server.message || server.detail">{{ serverDescription(server) }}</small>
           <small v-if="runtime" class="mcp-runtime-detail" :class="{ missing: !runtimeByName.get(server.name)?.toolCount }">{{ runtimeLabel(server.name) }}</small>
         </span>
-        <em :class="`status-${server.status}`">{{ t(`mcp.status.${server.status}`) }}</em>
+        <div class="mcp-server-status">
+          <em :class="`status-${server.status}`">{{ t(`mcp.status.${server.status}`) }}</em>
+          <button
+            v-if="retryable(server)"
+            class="mcp-server-retry"
+            type="button"
+            :disabled="Boolean(retryingName)"
+            :title="t('mcp.retryHelp')"
+            @click="$emit('retry', server.name)"
+          >
+            <RefreshCw :size="12" :class="{ spinning: retryingName === server.name }" />
+            {{ t(retryingName === server.name ? 'mcp.retrying' : 'common.retry') }}
+          </button>
+        </div>
       </article>
     </div>
   </section>

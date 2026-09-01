@@ -315,7 +315,10 @@ describe('ChatComposer attachments', () => {
     store.mcpRuntimeByConversation['conversation-1'] = {
       runId: 'run-1',
       toolCount: 2,
-      servers: [{ name: 'filesystem', status: 'connected', toolCount: 2 }],
+      servers: [
+        { name: 'filesystem', status: 'connected', toolCount: 2 },
+        { name: 'removed-server', status: 'failed', toolCount: 0 },
+      ],
     }
     desktop.listClaudeSkills.mockResolvedValue([{
       name: 'aliyun-observability',
@@ -347,6 +350,8 @@ describe('ChatComposer attachments', () => {
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Latest run: 2 tools available')
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('figma-mcp-front')
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Latest run: server was not loaded')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('removed-server')
+    expect(root.querySelector('.mcp-server-retry')).toBeNull()
     expect(store.sendMessage).not.toHaveBeenCalled()
 
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
@@ -407,6 +412,114 @@ describe('ChatComposer attachments', () => {
     await flushPromises()
     expect(desktop.listMcpServers).toHaveBeenCalledTimes(2)
     expect(root.querySelector('.mcp-panel-state')?.textContent).toContain('No MCP servers configured')
+  })
+
+  it('retries a failed MCP row once and replaces it with the recovered status', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    let finishRetry
+    desktop.listMcpServers
+      .mockResolvedValueOnce([
+        { name: 'filesystem', detail: 'node server.js', status: 'connected', message: '' },
+        { name: 'sentry', detail: 'https://mcp.test', status: 'failed', message: 'Connection refused' },
+        { name: 'private', detail: 'https://private.test', status: 'authRequired', message: 'Login required' },
+      ])
+      .mockReturnValueOnce(new Promise((resolve) => { finishRetry = resolve }))
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await flushPromises()
+
+    const retry = root.querySelector('.mcp-server-retry')
+    expect(root.querySelectorAll('.mcp-server-retry')).toHaveLength(1)
+    retry.click()
+    retry.click()
+    await nextTick()
+    expect(desktop.listMcpServers).toHaveBeenCalledTimes(2)
+    expect(retry.disabled).toBe(true)
+    expect(retry.textContent).toContain('Retrying')
+
+    finishRetry([
+      { name: 'filesystem', detail: 'node server.js', status: 'connected', message: '' },
+      { name: 'sentry', detail: 'https://mcp.test', status: 'connected', message: '' },
+      { name: 'private', detail: 'https://private.test', status: 'authRequired', message: 'Login required' },
+    ])
+    await flushPromises()
+
+    expect(root.querySelectorAll('.mcp-server-retry')).toHaveLength(0)
+    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('sentry')
+    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('Connected')
+  })
+
+  it('keeps a failed MCP row retryable when the health command fails', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    desktop.listMcpServers
+      .mockResolvedValueOnce([{ name: 'sentry', detail: 'https://mcp.test', status: 'failed', message: 'Connection refused' }])
+      .mockRejectedValueOnce(new Error('status unavailable'))
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await flushPromises()
+    root.querySelector('.mcp-server-retry').click()
+    await flushPromises()
+
+    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('Retry failed: Error: status unavailable')
+    expect(root.querySelector('.mcp-server-retry')?.disabled).toBe(false)
+  })
+
+  it('marks a missing MCP server as unknown after retry', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    desktop.listMcpServers
+      .mockResolvedValueOnce([{ name: 'sentry', detail: 'https://mcp.test', status: 'failed', message: 'Connection refused' }])
+      .mockResolvedValueOnce([])
+
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input'))
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await flushPromises()
+    root.querySelector('.mcp-server-retry').click()
+    await flushPromises()
+
+    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('Unknown')
+    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('did not return this server')
+    expect(root.querySelector('.mcp-server-retry')).not.toBeNull()
   })
 
   it('does not duplicate an in-flight MCP check when the panel is closed and reopened', async () => {

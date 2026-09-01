@@ -47,6 +47,7 @@ const mcpPanelRoot = ref(null)
 const mcpPanelOpen = ref(false)
 const mcpServers = ref([])
 const mcpLoading = ref(false)
+const mcpRetryingName = ref('')
 const mcpError = ref('')
 let mcpRequestId = 0
 const skillQuery = computed(() => slashSkillQuery(text.value))
@@ -181,7 +182,7 @@ function chooseSkill(skill) {
 
 async function loadMcpServers() {
   const projectPath = store.activeProject?.path
-  if (!projectPath || mcpLoading.value) return
+  if (!projectPath || mcpLoading.value || mcpRetryingName.value) return
   const requestId = ++mcpRequestId
   mcpLoading.value = true
   mcpError.value = ''
@@ -195,6 +196,31 @@ async function loadMcpServers() {
     }
   } finally {
     if (requestId === mcpRequestId) mcpLoading.value = false
+  }
+}
+
+async function retryMcpServer(name) {
+  const projectPath = store.activeProject?.path
+  if (!projectPath || mcpLoading.value || mcpRetryingName.value) return
+  const requestId = ++mcpRequestId
+  mcpRetryingName.value = name
+  try {
+    const servers = await desktop.listMcpServers(projectPath, store.settings.command, store.settings.env)
+    if (requestId !== mcpRequestId || store.activeProject?.path !== projectPath) return
+    const retried = servers.find((server) => server.name === name)
+    mcpServers.value = retried
+      ? servers
+      : mcpServers.value.map((server) => server.name === name
+        ? { ...server, status: 'unknown', message: t('mcp.retryMissing') }
+        : server)
+  } catch (error) {
+    if (requestId === mcpRequestId && store.activeProject?.path === projectPath) {
+      mcpServers.value = mcpServers.value.map((server) => server.name === name
+        ? { ...server, message: t('mcp.retryFailed', { message: String(error) }) }
+        : server)
+    }
+  } finally {
+    if (requestId === mcpRequestId) mcpRetryingName.value = ''
   }
 }
 
@@ -260,6 +286,7 @@ watch(activeConversationId, (next, previous) => {
 watch(() => store.activeProject?.path, () => {
   mcpRequestId += 1
   mcpLoading.value = false
+  mcpRetryingName.value = ''
   mcpServers.value = []
   mcpError.value = ''
   closeMcpPanel()
@@ -315,8 +342,10 @@ onBeforeUnmount(() => {
           :servers="mcpServers"
           :runtime="store.mcpRuntimeByConversation[store.activeConversationId] || null"
           :loading="mcpLoading"
+          :retrying-name="mcpRetryingName"
           :error="mcpError"
           @refresh="loadMcpServers"
+          @retry="retryMcpServer"
           @close="closeMcpPanel"
         />
       </div>

@@ -242,4 +242,33 @@ describe('MessageList stream following', () => {
       'conversation-1', 'run-123', '/tmp/diagnostic.json',
     ))
   })
+
+  it('renders proactive compaction lifecycle events as localized product messages', async () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({
+      render: () => h(MessageList, {
+        conversationId: 'conversation-1',
+        messages: [
+          {
+            id: 'compact-success', role: 'system',
+            content: 'Context compacted automatically · Pending message sent afterward',
+          },
+          {
+            id: 'compact-failed', role: 'system',
+            content: 'Automatic context compaction failed · Pending message paused',
+          },
+        ],
+        attachmentsByMessage: {},
+      }),
+    })
+    app.use(createPinia())
+    app.mount(root)
+    await nextTick()
+
+    expect([...root.querySelectorAll('.context-event')].map((event) => event.textContent)).toEqual([
+      'Context compacted automatically · Pending message sent afterward',
+      'Automatic context compaction failed · Pending message paused',
+    ])
+  })
 })

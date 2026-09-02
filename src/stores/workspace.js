@@ -14,6 +14,7 @@ import { removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 import { applyRunTaskEvent } from '../services/claude/tasks'
 import { diagnosticMessage } from '../services/claude/diagnostics'
+import { contextStatus, shouldAutoCompact } from '../services/claude/context'
 import { applyDisplaySettings, normalizeConversationDensity } from '../services/displaySettings'
 
 const defaultSettings = {
@@ -55,11 +56,12 @@ function moveRelative(items, sourceId, targetId, position = 'before') {
   return next.every((item, index) => item.id === items[index]?.id) ? items : next
 }
 
-function newRun(operation = 'chat', context = null) {
+function newRun(operation = 'chat', context = null, compaction = 'manual') {
   const activities = operation === 'compact' ? [{ id: 'compact', label: 'Compacting context', status: 'running' }] : []
   return {
     runId: null,
     operation,
+    compaction: operation === 'compact' ? compaction : '',
     content: '',
     activities,
     timeline: activities.map((activity) => ({ id: `activity:${activity.id}`, type: 'activity', activity })),
@@ -149,25 +151,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeContext(state) {
       const env = this.claudeSettings?.env || {}
       const current = state.runs[state.activeConversationId]?.context || state.contextStats[state.activeConversationId] || {}
-      const window = Number(current.window || env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || 0)
-      const reportedTokens = Number(current.tokens || 0)
-      // Older Claude Desk versions stored result-level cumulative usage as an
-      // estimated context value. Keep it visible as cumulative data, never as a
-      // percentage of a single model window.
-      const cumulativeTokens = Number(current.cumulativeTokens || (current.estimated ? reportedTokens : 0))
-      const measured = Boolean((current.measured || current.source === 'claude-transcript') && !current.estimated && reportedTokens && (!window || reportedTokens <= window))
-      return {
-        tokens: measured ? reportedTokens : 0,
-        window,
-        measured,
-        estimated: false,
-        cumulativeTokens,
-        source: current.source || '',
-        percentage: measured && window ? Math.round((reportedTokens / window) * 100) : 0,
-        autoCompact: env.DISABLE_AUTO_COMPACT !== '1',
-        threshold: Number(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || 95),
-        lastCompactedAt: current.lastCompactedAt || null,
-      }
+      return contextStatus(current, env)
     },
     activeChanges(state) { return state.changes[state.activeProjectId] || [] },
     activeGitEnvironment(state) {
@@ -446,12 +430,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         skill,
         createdAt: new Date().toISOString(),
       })
-      if (this.runs[conversation.id] || this.queuedMessages[conversation.id]?.length) {
-        ;(this.queuedMessages[conversation.id] ||= []).push(queued)
-        if (!this.runs[conversation.id]) await this.dispatchNextQueued(conversation.id)
-        return
-      }
-      await this.dispatchMessage(queued)
+      ;(this.queuedMessages[conversation.id] ||= []).push(queued)
+      if (!this.runs[conversation.id]) await this.dispatchNextQueued(conversation.id)
     },
 
     async dispatchMessage(queued) {
@@ -533,9 +513,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
-    async dispatchNextQueued(conversationId) {
+    async dispatchNextQueued(conversationId, { skipAutoCompact = false } = {}) {
       if (this.runs[conversationId]) return
-      const [next, rest] = takeNextQueuedMessage(this.queuedMessages[conversationId] || [])
+      const pending = this.queuedMessages[conversationId] || []
+      if (!pending.length) return
+      if (!skipAutoCompact && shouldAutoCompact(this.contextStats[conversationId], this.claudeSettings?.env || {})) {
+        const outcome = await this.startCompaction(conversationId, 'automatic')
+        // A failed start must pause the queued message just like a failed
+        // compaction run. Only missing history/runtime makes compaction inapplicable.
+        if (outcome !== 'unavailable') return
+      }
+      const [next, rest] = takeNextQueuedMessage(pending)
       if (!next) return
       this.queuedMessages[conversationId] = rest
       await this.dispatchMessage(next)
@@ -671,7 +659,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async finishRun(conversationId, shouldContinue) {
-      const runId = this.runs[conversationId]?.runId
+      const finishedRun = this.runs[conversationId]
+      const runId = finishedRun?.runId
       this.permissionRequests = this.permissionRequests.filter((request) => (
         request.conversationId !== conversationId || request.runId !== runId
       ))
@@ -680,7 +669,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       ))
       await this.finalizeRun(conversationId)
       delete this.runs[conversationId]
-      if (shouldContinue) await this.dispatchNextQueued(conversationId)
+      if (shouldContinue) {
+        await this.dispatchNextQueued(conversationId, { skipAutoCompact: finishedRun?.operation === 'compact' })
+      }
     },
 
     async finalizeRun(conversationId) {
@@ -693,10 +684,23 @@ export const useWorkspaceStore = defineStore('workspace', {
         const compactedAt = new Date().toISOString()
         this.contextStats[conversationId] = { ...run.context, lastCompactedAt: compactedAt }
         try {
-          const message = await desktop.saveMessage(conversationId, 'system', 'Context compacted manually · Full transcript remains available')
+          const content = run.compaction === 'automatic'
+            ? 'Context compacted automatically · Pending message sent afterward'
+            : 'Context compacted manually · Full transcript remains available'
+          const message = await desktop.saveMessage(conversationId, 'system', content)
           ;(this.messages[conversationId] ||= []).push(message)
         } catch (error) { run.error = String(error) }
       } else {
+        if (run.operation === 'compact' && run.compaction === 'automatic' && run.status === 'error') {
+          try {
+            const message = await desktop.saveMessage(
+              conversationId,
+              'system',
+              'Automatic context compaction failed · Pending message paused',
+            )
+            ;(this.messages[conversationId] ||= []).push(message)
+          } catch (error) { run.error = String(error) }
+        }
         const partial = run.content.trim()
         const content = run.status === 'interrupted' && partial
           ? `${partial}\n\n> 已根据补充内容中断，并继续处理新要求。`
@@ -852,12 +856,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.settingsOpen = false
     },
 
-    async compactConversation() {
-      const conversation = this.activeConversation
-      const project = this.activeProject
-      const hasHistory = this.activeMessages.some((message) => message.role === 'user')
-      if (!conversation || !project || !hasHistory || this.runs[conversation.id]) return
-      this.runs[conversation.id] = newRun('compact', this.contextStats[conversation.id])
+    async startCompaction(conversationId, compaction = 'manual') {
+      const conversation = this.conversationById(conversationId)
+      const project = this.projects.find((item) => item.id === conversation?.projectId)
+      const hasHistory = (this.messages[conversationId] || []).some((message) => message.role === 'user')
+      if (!conversation || !project || !hasHistory || this.runs[conversation.id]) return 'unavailable'
+      this.runs[conversation.id] = newRun('compact', this.contextStats[conversation.id], compaction)
       delete this.mcpRuntimeByConversation[conversation.id]
       try {
         const runId = await desktop.sendClaude({
@@ -875,13 +879,20 @@ export const useWorkspaceStore = defineStore('workspace', {
           effort: conversation.effort || null,
         })
         if (this.runs[conversation.id]) this.runs[conversation.id].runId = runId
+        return 'started'
       } catch (error) {
         this.runs[conversation.id].status = 'error'
         this.runs[conversation.id].error = String(error)
         this.error = String(error)
         await this.finalizeRun(conversation.id)
         delete this.runs[conversation.id]
+        return 'failed'
       }
+    },
+
+    async compactConversation() {
+      if (!this.activeConversationId) return 'unavailable'
+      return this.startCompaction(this.activeConversationId, 'manual')
     },
 
     async savePermissionMode(permissionMode) {

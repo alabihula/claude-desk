@@ -341,6 +341,125 @@ describe('workspace supplemental messages', () => {
     })
   })
 
+  it('compacts at the configured threshold before sending the next message', async () => {
+    const store = setupStore()
+    store.claudeSettings = { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '85' } }
+    store.contextStats['conversation-1'] = {
+      tokens: 170000, window: 200000, measured: true, source: 'claude-transcript',
+    }
+
+    await store.sendMessage('压缩后继续处理')
+
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(store.activeQueuedMessages[0].content).toBe('压缩后继续处理')
+    expect(store.activeRun).toMatchObject({ operation: 'compact', compaction: 'automatic' })
+    expect(desktop.saveMessage).not.toHaveBeenCalled()
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(1)
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ operation: 'compact' }))
+  })
+
+  it('sends all pending messages in order after proactive compaction succeeds', async () => {
+    const store = setupStore()
+    store.claudeSettings = { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '85' } }
+    store.contextStats['conversation-1'] = {
+      tokens: 186000, window: 200000, measured: true, source: 'claude-transcript',
+    }
+
+    await store.sendMessage('第一条待发送消息')
+    await store.sendMessage('第二条待发送消息')
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(1)
+
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: { type: 'system', subtype: 'status', status: null, compact_result: 'success' },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'context',
+      data: { tokens: 1200, window: 200000, source: 'claude-transcript' },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: { type: 'result', result: '', is_error: false },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'exit', data: { success: true, code: 0 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun?.operation).toBe('chat'))
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(2)
+    expect(desktop.sendClaude.mock.calls.map(([request]) => request.operation)).toEqual(['compact', 'chat'])
+    expect(store.activeQueuedMessages.map((message) => message.content)).toEqual(['第二条待发送消息'])
+    expect(store.activeMessages.at(-2)).toMatchObject({
+      role: 'system', content: 'Context compacted automatically · Pending message sent afterward',
+    })
+    expect(store.activeMessages.at(-1)).toMatchObject({ role: 'user', content: '第一条待发送消息' })
+  })
+
+  it('keeps the pending message paused when proactive compaction is rejected', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = {
+      tokens: 195000, window: 200000, measured: true, source: 'claude-transcript',
+    }
+
+    await store.sendMessage('不要丢失这条消息')
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'stream',
+      data: {
+        type: 'system', subtype: 'status', status: null, compact_result: 'failed',
+        compact_error: 'Provider rejected compaction.',
+      },
+    })
+    store.handleClaudeEvent({
+      conversationId: 'conversation-1', runId: 'run-next', kind: 'exit', data: { success: true, code: 0 },
+    })
+
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(store.activeQueuedMessages[0].content).toBe('不要丢失这条消息')
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(1)
+    expect(store.activeMessages).toContainEqual(expect.objectContaining({
+      role: 'system', content: 'Automatic context compaction failed · Pending message paused',
+    }))
+    expect(desktop.saveMessage).toHaveBeenCalledWith(
+      'conversation-1', 'system', 'claude-desk:diagnostic:run-error:run-next',
+    )
+  })
+
+  it('keeps the pending message when proactive compaction cannot start', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = {
+      tokens: 195000, window: 200000, measured: true, source: 'claude-transcript',
+    }
+    desktop.sendClaude.mockRejectedValueOnce(new Error('Claude process unavailable'))
+
+    await store.sendMessage('启动失败也要保留')
+
+    expect(store.activeRun).toBeNull()
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(store.activeQueuedMessages[0].content).toBe('启动失败也要保留')
+    expect(store.activeMessages.at(-1)).toMatchObject({
+      role: 'system', content: 'Automatic context compaction failed · Pending message paused',
+    })
+    expect(store.error).toContain('Claude process unavailable')
+  })
+
+  it('sends normally when context usage is unmeasured or automatic compaction is disabled', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = { tokens: 195000, window: 200000, measured: false }
+
+    await store.sendMessage('未测量时直接发送')
+    expect(desktop.sendClaude).toHaveBeenLastCalledWith(expect.objectContaining({ operation: 'chat' }))
+
+    delete store.runs['conversation-1']
+    store.claudeSettings = { env: { DISABLE_AUTO_COMPACT: '1' } }
+    store.contextStats['conversation-1'] = {
+      tokens: 195000, window: 200000, measured: true, source: 'claude-transcript',
+    }
+    await store.sendMessage('关闭自动压缩时直接发送')
+
+    expect(desktop.sendClaude.mock.calls.map(([request]) => request.operation)).toEqual(['chat', 'chat'])
+  })
+
   it('updates context usage after confirmed manual compaction', async () => {
     const store = setupStore()
     store.contextStats['conversation-1'] = {

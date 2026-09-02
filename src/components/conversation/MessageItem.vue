@@ -28,6 +28,11 @@ const messageCopied = ref(false)
 const diagnosticStatus = ref('idle')
 let fileRequestId = 0
 let messageCopyTimer
+const contextEventTranslations = {
+  'Context compacted manually · Full transcript remains available': 'message.compactedManually',
+  'Context compacted automatically · Pending message sent afterward': 'message.compactedAutomatically',
+  'Automatic context compaction failed · Pending message paused': 'message.compactionFailed',
+}
 const rendered = computed(() => {
   let content = props.message.content || ''
   for (const attachment of props.attachments) {
@@ -37,6 +42,10 @@ const rendered = computed(() => {
   return createMessageMarkdown({ code: t('message.code'), copy: t('message.copy'), copyAria: t('message.copyCode') }).render(content.trim())
 })
 const diagnostic = computed(() => props.message.role === 'system' ? parseDiagnosticMessage(props.message.content) : null)
+const systemContent = computed(() => {
+  const key = contextEventTranslations[props.message.content]
+  return key ? t(key) : props.message.content
+})
 const messageTime = computed(() => formatMessageTime(props.message.createdAt || props.message.created_at, language.value))
 const fileRefs = computed(() => {
   return extractProjectFileReferences(props.message.content)
@@ -171,7 +180,7 @@ onBeforeUnmount(() => {
     <div><strong>{{ t(diagnostic.kind === 'empty-response' ? 'diagnostic.emptyTitle' : 'diagnostic.errorTitle') }}</strong><span>{{ t(diagnostic.kind === 'empty-response' ? 'diagnostic.emptyBody' : 'diagnostic.errorBody') }}</span></div>
     <button :disabled="diagnosticStatus === 'saving'" @click="exportDiagnostic"><Download :size="14" />{{ t(diagnosticStatus === 'saving' ? 'diagnostic.exporting' : diagnosticStatus === 'saved' ? 'diagnostic.exported' : 'diagnostic.export') }}</button>
   </article>
-  <article v-else-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ message.content === 'Context compacted manually · Full transcript remains available' ? t('message.compactedManually') : message.content }}</span></article>
+  <article v-else-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ systemContent }}</span></article>
   <article v-else class="message" :class="`message-${message.role}`">
     <div class="message-surface">
       <div class="message-author">{{ message.role === 'user' ? t('message.you') : 'Claude' }}</div>

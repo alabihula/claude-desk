@@ -2,7 +2,7 @@ use crate::{context, runtime};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{collections::HashMap, fs};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -39,6 +39,8 @@ pub struct ContextStats {
     pub window: i64,
     pub cumulative_tokens: i64,
     pub source: String,
+    pub model: String,
+    pub model_windows: HashMap<String, i64>,
     pub updated_at: String,
 }
 
@@ -152,6 +154,8 @@ fn migrate_connection(connection: &Connection) -> Result<(), String> {
               context_window INTEGER NOT NULL DEFAULT 0,
               cumulative_tokens INTEGER NOT NULL DEFAULT 0,
               source TEXT NOT NULL,
+              model TEXT NOT NULL DEFAULT '',
+              model_windows TEXT NOT NULL DEFAULT '{}',
               updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS attachments (
@@ -208,6 +212,22 @@ fn migrate_connection(connection: &Connection) -> Result<(), String> {
     if !has_column(connection, "conversations", "effort")? {
         connection
             .execute("ALTER TABLE conversations ADD COLUMN effort TEXT", [])
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(connection, "conversation_context", "model")? {
+        connection
+            .execute(
+                "ALTER TABLE conversation_context ADD COLUMN model TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    if !has_column(connection, "conversation_context", "model_windows")? {
+        connection
+            .execute(
+                "ALTER TABLE conversation_context ADD COLUMN model_windows TEXT NOT NULL DEFAULT '{}'",
+                [],
+            )
             .map_err(|error| error.to_string())?;
     }
 
@@ -471,7 +491,7 @@ fn context_stats(
 ) -> Result<Option<ContextStats>, String> {
     connection
         .query_row(
-            "SELECT conversation_id, tokens, context_window, cumulative_tokens, source, updated_at FROM conversation_context WHERE conversation_id = ?1",
+            "SELECT conversation_id, tokens, context_window, cumulative_tokens, source, model, model_windows, updated_at FROM conversation_context WHERE conversation_id = ?1",
             [conversation_id],
             |row| {
                 Ok(ContextStats {
@@ -480,7 +500,9 @@ fn context_stats(
                     window: row.get(2)?,
                     cumulative_tokens: row.get(3)?,
                     source: row.get(4)?,
-                    updated_at: row.get(5)?,
+                    model: row.get(5)?,
+                    model_windows: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or_default(),
+                    updated_at: row.get(7)?,
                 })
             },
         )
@@ -496,10 +518,12 @@ pub fn read_context_stats(
 }
 
 pub fn save_context_stats(app: &AppHandle, stats: &ContextStats) -> Result<(), String> {
+    let model_windows =
+        serde_json::to_string(&stats.model_windows).map_err(|error| error.to_string())?;
     connect(app)?
         .execute(
-            "INSERT INTO conversation_context (conversation_id, tokens, context_window, cumulative_tokens, source, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(conversation_id) DO UPDATE SET tokens = excluded.tokens, context_window = excluded.context_window, cumulative_tokens = excluded.cumulative_tokens, source = excluded.source, updated_at = excluded.updated_at",
-            params![stats.conversation_id, stats.tokens, stats.window, stats.cumulative_tokens, stats.source, stats.updated_at],
+            "INSERT INTO conversation_context (conversation_id, tokens, context_window, cumulative_tokens, source, model, model_windows, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(conversation_id) DO UPDATE SET tokens = excluded.tokens, context_window = excluded.context_window, cumulative_tokens = excluded.cumulative_tokens, source = excluded.source, model = excluded.model, model_windows = excluded.model_windows, updated_at = excluded.updated_at",
+            params![stats.conversation_id, stats.tokens, stats.window, stats.cumulative_tokens, stats.source, stats.model, model_windows, stats.updated_at],
         )
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -545,6 +569,14 @@ pub fn refresh_context_stats(
             .map(|item| item.cumulative_tokens)
             .unwrap_or(0),
         source: "claude-transcript".into(),
+        model: existing
+            .as_ref()
+            .map(|item| item.model.clone())
+            .unwrap_or_default(),
+        model_windows: existing
+            .as_ref()
+            .map(|item| item.model_windows.clone())
+            .unwrap_or_default(),
         updated_at: now(),
     };
     save_context_stats(&app, &stats)?;
@@ -702,6 +734,39 @@ mod message_tests {
             )
             .unwrap();
         assert_eq!(values, (None, None));
+    }
+
+    #[test]
+    fn migrates_context_rows_with_empty_model_metadata() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE conversation_context (
+                  conversation_id TEXT PRIMARY KEY,
+                  tokens INTEGER NOT NULL DEFAULT 0,
+                  context_window INTEGER NOT NULL DEFAULT 0,
+                  cumulative_tokens INTEGER NOT NULL DEFAULT 0,
+                  source TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                INSERT INTO conversation_context VALUES (
+                  'conversation-1', 186000, 200000, 0, 'claude-transcript', 'now'
+                );",
+            )
+            .unwrap();
+
+        migrate_connection(&connection).unwrap();
+
+        assert!(has_column(&connection, "conversation_context", "model").unwrap());
+        assert!(has_column(&connection, "conversation_context", "model_windows").unwrap());
+        let values: (String, String) = connection
+            .query_row(
+                "SELECT model, model_windows FROM conversation_context WHERE conversation_id = 'conversation-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(values, (String::new(), "{}".into()));
     }
 
     #[test]

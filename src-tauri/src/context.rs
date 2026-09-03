@@ -31,6 +31,23 @@ pub fn context_window(model_usage: Option<&Value>) -> i64 {
         .unwrap_or(0)
 }
 
+pub fn context_window_for_model(
+    reported_window: i64,
+    previous_window: i64,
+    previous_model: &str,
+    current_model: &str,
+) -> i64 {
+    if reported_window > 0 {
+        reported_window
+    } else if previous_model == current_model {
+        previous_window.max(0)
+    } else {
+        // Slash commands can omit modelUsage. Reusing another model's limit
+        // here would make the frontend compact against the wrong capacity.
+        0
+    }
+}
+
 pub fn latest_session_usage(config_dir: &Path, session_id: &str) -> Result<Option<i64>, String> {
     Uuid::parse_str(session_id).map_err(|_| "Invalid Claude session identifier".to_string())?;
     let projects = config_dir.join("projects");
@@ -95,7 +112,10 @@ pub fn default_config_dir(home_dir: PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_window, latest_session_usage, parse_session_usage, usage_tokens};
+    use super::{
+        context_window, context_window_for_model, latest_session_usage, parse_session_usage,
+        usage_tokens,
+    };
     use serde_json::json;
     use std::fs;
 
@@ -199,5 +219,21 @@ mod tests {
             "fallback": { "contextWindow": 128000 }
         });
         assert_eq!(context_window(Some(&usage)), 200000);
+    }
+
+    #[test]
+    fn reuses_a_missing_window_only_for_the_same_model() {
+        assert_eq!(
+            context_window_for_model(0, 200_000, "model-a", "model-a"),
+            200_000
+        );
+        assert_eq!(
+            context_window_for_model(0, 200_000, "model-a", "model-b"),
+            0
+        );
+        assert_eq!(
+            context_window_for_model(1_000_000, 200_000, "model-a", "model-b"),
+            1_000_000
+        );
     }
 }

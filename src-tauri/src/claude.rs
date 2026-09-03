@@ -67,6 +67,7 @@ pub struct ClaudeRequest {
     pub permission_mode: Option<String>,
     pub skill_path: Option<String>,
     pub model: Option<String>,
+    pub context_model: Option<String>,
     pub effort: Option<String>,
     pub operation: Option<String>,
 }
@@ -430,6 +431,9 @@ pub async fn send_claude(
     }
 
     let model = runtime::normalize_model(request.model.as_deref())?;
+    let context_model = request.context_model.as_deref().unwrap_or_default().trim();
+    runtime::normalize_model(Some(context_model))?;
+    let context_model = context_model.to_string();
     let effort = runtime::normalize_effort(request.effort.as_deref())?;
     let runtime_args = runtime::with_runtime_overrides(
         request.args.clone().unwrap_or_default(),
@@ -560,6 +564,7 @@ pub async fn send_claude(
     let run_for_task = run_id.clone();
     let input_for_task = input.clone();
     let permissions_for_task = pending_permissions.clone();
+    let context_model_for_task = context_model.clone();
     tauri::async_runtime::spawn(async move {
         emit(
             &app_for_task,
@@ -641,14 +646,18 @@ pub async fn send_claude(
             .flatten();
         // Slash-command results commonly omit modelUsage and run-level usage.
         // Keep the last known metadata instead of making the context meter regress.
-        let effective_context_window = if context_window > 0 {
-            context_window
-        } else {
+        let effective_context_window = context::context_window_for_model(
+            context_window,
             previous_context
                 .as_ref()
                 .map(|stats| stats.window)
-                .unwrap_or(0)
-        };
+                .unwrap_or(0),
+            previous_context
+                .as_ref()
+                .map(|stats| stats.model.as_str())
+                .unwrap_or_default(),
+            &context_model_for_task,
+        );
         let effective_cumulative_tokens = if cumulative_tokens > 0 {
             cumulative_tokens
         } else {
@@ -658,6 +667,13 @@ pub async fn send_claude(
                 .unwrap_or(0)
         };
         let mut context_stats = None;
+        let mut model_windows = previous_context
+            .as_ref()
+            .map(|stats| stats.model_windows.clone())
+            .unwrap_or_default();
+        if !context_model_for_task.is_empty() && effective_context_window > 0 {
+            model_windows.insert(context_model_for_task.clone(), effective_context_window);
+        }
         for attempt in 0..3 {
             match context::latest_session_usage(&context_config_dir, &session_id) {
                 Ok(Some(tokens)) => {
@@ -667,6 +683,8 @@ pub async fn send_claude(
                         window: effective_context_window,
                         cumulative_tokens: effective_cumulative_tokens,
                         source: "claude-transcript".into(),
+                        model: context_model_for_task.clone(),
+                        model_windows: model_windows.clone(),
                         updated_at: Utc::now().to_rfc3339(),
                     };
                     if data::save_context_stats(&app_for_task, &stats).is_ok() {
@@ -685,6 +703,8 @@ pub async fn send_claude(
                 window: effective_context_window,
                 cumulative_tokens: effective_cumulative_tokens,
                 source: "provider-cumulative".into(),
+                model: context_model_for_task,
+                model_windows,
                 updated_at: Utc::now().to_rfc3339(),
             };
             if data::save_context_stats(&app_for_task, &stats).is_ok() {

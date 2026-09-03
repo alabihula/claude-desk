@@ -1,6 +1,6 @@
 {
   "name": "claude-desk",
-  "version": "0.1.47",
+  "version": "0.1.48",
   "private": true,
   "description": "An unofficial, native desktop client for Claude Code.",
   "license": "MIT",

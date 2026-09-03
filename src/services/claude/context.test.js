@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contextStatus, shouldAutoCompact } from './context'
+import { contextForModel, contextStatus, inferredContextWindow, shouldAutoCompact } from './context'
 
 describe('Claude context status', () => {
   it('triggers proactive compaction at the exact configured threshold', () => {
@@ -28,5 +28,46 @@ describe('Claude context status', () => {
 
     expect(shouldAutoCompact(current, { DISABLE_AUTO_COMPACT: '1' })).toBe(false)
     expect(shouldAutoCompact(current, { DISABLE_COMPACT: '1' })).toBe(false)
+  })
+
+  it('recalculates against a cached target-model window', () => {
+    const current = {
+      tokens: 186000,
+      window: 200000,
+      model: 'model-a',
+      modelWindows: { 'model-a': 200000, 'model-b': 1000000 },
+      source: 'claude-transcript',
+    }
+
+    expect(contextStatus(current, {}, 'model-b')).toMatchObject({
+      model: 'model-b', window: 1000000, percentage: 19, windowPending: false,
+    })
+    expect(shouldAutoCompact(current, {}, 'model-b')).toBe(false)
+  })
+
+  it('marks an unseen custom model window pending instead of reusing the previous model', () => {
+    const current = {
+      tokens: 186000, window: 200000, model: 'model-a', source: 'claude-transcript',
+    }
+
+    expect(contextForModel(current, 'custom-model-b')).toMatchObject({
+      model: 'custom-model-b', window: 0, windowPending: true,
+    })
+    expect(shouldAutoCompact(current, {}, 'custom-model-b')).toBe(false)
+  })
+
+  it('recognizes the explicit extended-context model suffix immediately', () => {
+    expect(inferredContextWindow('sonnet[1m]')).toBe(1000000)
+    expect(contextStatus({
+      tokens: 186000, window: 200000, model: 'sonnet', source: 'claude-transcript',
+    }, {}, 'sonnet[1m]')).toMatchObject({ window: 1000000, percentage: 19, windowPending: false })
+  })
+
+  it('treats an explicit context-window setting as authoritative for a new model', () => {
+    expect(contextStatus({
+      tokens: 186000, window: 200000, model: 'model-a', source: 'claude-transcript',
+    }, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' }, 'model-b')).toMatchObject({
+      window: 1000000, percentage: 19, windowPending: false,
+    })
   })
 })

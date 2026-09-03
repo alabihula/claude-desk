@@ -131,6 +131,63 @@ describe('workspace supplemental messages', () => {
     expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet[1m]', effort: 'high' }))
   })
 
+  it('locks the configured profile model while a queued message waits', async () => {
+    const store = setupStore()
+    store.claudeSettings = { model: 'model-a', env: {} }
+    store.runs['conversation-1'] = runningRun()
+
+    await store.sendMessage('使用当前配置发送')
+    store.claudeSettings = { model: 'model-b', env: {} }
+    delete store.runs['conversation-1']
+    await store.dispatchNextQueued('conversation-1')
+
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'model-a',
+      contextModel: 'model-a',
+    }))
+  })
+
+  it('refreshes the percentage from a cached window when the model changes', async () => {
+    const store = setupStore()
+    store.conversations[0].model = 'model-a'
+    store.contextStats['conversation-1'] = {
+      tokens: 186000,
+      window: 200000,
+      model: 'model-a',
+      modelWindows: { 'model-a': 200000, 'model-b': 1000000 },
+      measured: true,
+      source: 'claude-transcript',
+    }
+
+    await store.updateConversationRuntime('conversation-1', { model: 'model-b', effort: 'auto' })
+
+    expect(store.activeContext).toMatchObject({
+      model: 'model-b', window: 1000000, percentage: 19, windowPending: false,
+    })
+  })
+
+  it('does not compact an unseen model against the previous model window', async () => {
+    const store = setupStore()
+    store.conversations[0].model = 'model-a'
+    store.contextStats['conversation-1'] = {
+      tokens: 186000,
+      window: 200000,
+      model: 'model-a',
+      modelWindows: { 'model-a': 200000 },
+      measured: true,
+      source: 'claude-transcript',
+    }
+    await store.updateConversationRuntime('conversation-1', { model: 'model-b', effort: 'auto' })
+
+    expect(store.activeContext).toMatchObject({ model: 'model-b', window: 0, windowPending: true })
+    await store.sendMessage('先确认新模型容量')
+
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(1)
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({
+      operation: 'chat', model: 'model-b', contextModel: 'model-b',
+    }))
+  })
+
   it('prioritizes the selected supplement and interrupts the current run', async () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()

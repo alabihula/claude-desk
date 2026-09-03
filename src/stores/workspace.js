@@ -10,11 +10,11 @@ import { createQueuedMessage, prioritizeQueuedMessage, resetQueuedMessage, takeN
 import { withRuntimeGuidance } from '../services/claude/runtime'
 import { externalSkillPrompt } from '../services/skills'
 import { fileSelectionsPrompt, projectFileOpenMode } from '../services/localFiles'
-import { removeMigratedLegacySettings } from '../services/claude/settings'
+import { configuredModel, removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 import { applyRunTaskEvent } from '../services/claude/tasks'
 import { diagnosticMessage } from '../services/claude/diagnostics'
-import { contextStatus, shouldAutoCompact } from '../services/claude/context'
+import { contextForModel, contextModelKey, contextStatus, shouldAutoCompact } from '../services/claude/context'
 import { applyDisplaySettings, normalizeConversationDensity } from '../services/displaySettings'
 
 const defaultSettings = {
@@ -56,7 +56,7 @@ function moveRelative(items, sourceId, targetId, position = 'before') {
   return next.every((item, index) => item.id === items[index]?.id) ? items : next
 }
 
-function newRun(operation = 'chat', context = null, compaction = 'manual') {
+function newRun(operation = 'chat', context = null, compaction = 'manual', contextModel = '') {
   const activities = operation === 'compact' ? [{ id: 'compact', label: 'Compacting context', status: 'running' }] : []
   return {
     runId: null,
@@ -80,11 +80,13 @@ function newRun(operation = 'chat', context = null, compaction = 'manual') {
     diagnosticKind: '',
     compactResult: operation === 'compact' ? 'pending' : '',
     mcpRuntime: null,
-    context: context ? { ...context } : { tokens: 0, window: 0, measured: false },
+    context: context
+      ? contextForModel(context, contextModel)
+      : { tokens: 0, window: 0, measured: false, model: contextModelKey(contextModel), modelWindows: {} },
   }
 }
 
-function storedContext(stats) {
+function storedContext(stats, fallbackModel = '') {
   if (!stats) return null
   return {
     tokens: Number(stats.tokens || 0),
@@ -92,8 +94,14 @@ function storedContext(stats) {
     cumulativeTokens: Number(stats.cumulativeTokens || 0),
     measured: stats.source === 'claude-transcript',
     source: stats.source || '',
+    model: contextModelKey(stats.model || fallbackModel),
+    modelWindows: stats.modelWindows && typeof stats.modelWindows === 'object' ? { ...stats.modelWindows } : {},
     lastCompactedAt: stats.lastCompactedAt || null,
   }
+}
+
+function conversationModel(conversation, claudeSettings, settings) {
+  return contextModelKey(conversation?.model || configuredModel(claudeSettings, settings))
 }
 
 export const useWorkspaceStore = defineStore('workspace', {
@@ -151,7 +159,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeContext(state) {
       const env = this.claudeSettings?.env || {}
       const current = state.runs[state.activeConversationId]?.context || state.contextStats[state.activeConversationId] || {}
-      return contextStatus(current, env)
+      const model = conversationModel(this.activeConversation, this.claudeSettings, state.settings)
+      return contextStatus(current, env, model)
     },
     activeChanges(state) { return state.changes[state.activeProjectId] || [] },
     activeGitEnvironment(state) {
@@ -329,6 +338,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       await desktop.touchConversation(id)
       try {
         const context = await desktop.refreshContextStats(id)
+        // Legacy rows have no model identity. Keep that identity empty so an
+        // explicit current model cannot accidentally inherit a stale window.
         if (context) this.contextStats[id] = storedContext(context)
       } catch {
         // Context telemetry is optional and must not block opening a conversation.
@@ -356,6 +367,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     async updateConversationRuntime(conversationId, runtime) {
       const conversation = this.conversationById(conversationId)
       if (!conversation) return
+      const previousModel = conversationModel(conversation, this.claudeSettings, this.settings)
       const model = String(runtime.model || '').trim() || null
       const effort = runtime.effort && runtime.effort !== 'auto' ? runtime.effort : null
       await desktop.updateConversationRuntime(conversationId, model, effort)
@@ -365,6 +377,14 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       const activeMatch = this.conversations.find((item) => item.id === conversationId)
       if (activeMatch) Object.assign(activeMatch, { model, effort })
+      const nextModel = conversationModel({ ...conversation, model }, this.claudeSettings, this.settings)
+      if (previousModel !== nextModel && this.contextStats[conversationId]) {
+        const current = this.contextStats[conversationId]
+        const currentModel = contextModelKey(current.model)
+        const modelWindows = { ...(current.modelWindows || {}) }
+        if (currentModel && current.window > 0) modelWindows[currentModel] = current.window
+        this.contextStats[conversationId] = contextForModel({ ...current, model: currentModel, modelWindows }, nextModel)
+      }
     },
 
     async deleteConversation(conversation) {
@@ -422,7 +442,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!conversation || !project || (!cleanContent && !attachments.length && !snippets.length)) return
       const queued = createQueuedMessage({
         id: crypto.randomUUID(),
-        conversation,
+        // Queue the effective model, not only an explicit conversation
+        // override. Profile changes while a message waits must not alter the
+        // context limit used for that message.
+        conversation: {
+          ...conversation,
+          model: conversationModel(conversation, this.claudeSettings, this.settings) || null,
+        },
         project,
         content: cleanContent,
         attachments,
@@ -453,7 +479,13 @@ export const useWorkspaceStore = defineStore('workspace', {
         await this.renameConversation(conversation, conciseTitle(queued.content || queued.snippets[0]?.path || queued.attachments[0]?.name || 'New Conversation'))
       }
 
-      this.runs[queued.conversationId] = newRun('chat', this.contextStats[queued.conversationId])
+      const contextModel = contextModelKey(queued.model || configuredModel(this.claudeSettings, this.settings))
+      this.runs[queued.conversationId] = newRun(
+        'chat',
+        this.contextStats[queued.conversationId],
+        'manual',
+        contextModel,
+      )
       delete this.mcpRuntimeByConversation[queued.conversationId]
       try {
         const runId = await desktop.sendClaude({
@@ -467,6 +499,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
           operation: 'chat',
+          contextModel,
           skillPath: queued.skill?.path || null,
           model: queued.model,
           effort: queued.effort,
@@ -517,8 +550,16 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.runs[conversationId]) return
       const pending = this.queuedMessages[conversationId] || []
       if (!pending.length) return
-      if (!skipAutoCompact && shouldAutoCompact(this.contextStats[conversationId], this.claudeSettings?.env || {})) {
-        const outcome = await this.startCompaction(conversationId, 'automatic')
+      const nextModel = contextModelKey(pending[0].model || configuredModel(this.claudeSettings, this.settings))
+      if (!skipAutoCompact && shouldAutoCompact(
+        this.contextStats[conversationId],
+        this.claudeSettings?.env || {},
+        nextModel,
+      )) {
+        const outcome = await this.startCompaction(conversationId, 'automatic', {
+          model: pending[0].model,
+          contextModel: nextModel,
+        })
         // A failed start must pause the queued message just like a failed
         // compaction run. Only missing history/runtime makes compaction inapplicable.
         if (outcome !== 'unavailable') return
@@ -591,7 +632,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       // stderr also carries non-fatal provider diagnostics. The backend keeps a
       // bounded, redacted copy for exports; only structured errors belong in the UI.
       if (payload.kind === 'context') {
-        const context = storedContext(payload.data)
+        const context = storedContext(payload.data, run.context.model)
         if (context) Object.assign(run.context, context)
       }
       if (payload.kind === 'error') {
@@ -623,7 +664,15 @@ export const useWorkspaceStore = defineStore('workspace', {
             run.resultValueType = event.valueType
             if (!run.content && event.text) run.content = event.text
             if (event.cumulativeTokens) run.context.cumulativeTokens = event.cumulativeTokens
-            if (event.contextWindow) run.context.window = event.contextWindow
+            if (event.contextWindow) {
+              run.context.window = event.contextWindow
+              if (run.context.model) {
+                run.context.modelWindows = {
+                  ...(run.context.modelWindows || {}),
+                  [run.context.model]: event.contextWindow,
+                }
+              }
+            }
             if (event.permissionDenials.length) run.permissionDenied = true
             if (event.error) {
               if (run.status !== 'stopping' && run.status !== 'steering') { run.status = 'error'; run.error = event.errorMessage }
@@ -856,12 +905,21 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.settingsOpen = false
     },
 
-    async startCompaction(conversationId, compaction = 'manual') {
+    async startCompaction(conversationId, compaction = 'manual', runtime = {}) {
       const conversation = this.conversationById(conversationId)
       const project = this.projects.find((item) => item.id === conversation?.projectId)
       const hasHistory = (this.messages[conversationId] || []).some((message) => message.role === 'user')
       if (!conversation || !project || !hasHistory || this.runs[conversation.id]) return 'unavailable'
-      this.runs[conversation.id] = newRun('compact', this.contextStats[conversation.id], compaction)
+      const model = Object.prototype.hasOwnProperty.call(runtime, 'model') ? runtime.model : conversation.model
+      const contextModel = contextModelKey(runtime.contextModel
+        || model
+        || configuredModel(this.claudeSettings, this.settings))
+      this.runs[conversation.id] = newRun(
+        'compact',
+        this.contextStats[conversation.id],
+        compaction,
+        contextModel,
+      )
       delete this.mcpRuntimeByConversation[conversation.id]
       try {
         const runId = await desktop.sendClaude({
@@ -875,7 +933,8 @@ export const useWorkspaceStore = defineStore('workspace', {
           env: this.settings.env,
           permissionMode: this.settings.permissionMode,
           operation: 'compact',
-          model: conversation.model || null,
+          contextModel,
+          model: model || null,
           effort: conversation.effort || null,
         })
         if (this.runs[conversation.id]) this.runs[conversation.id].runId = runId

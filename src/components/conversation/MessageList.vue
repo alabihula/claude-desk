@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
         >
           <MessageItem :message="message" :attachments="attachmentsByMessage[message.id] || []" />
         </div>
-      <ActivityList v-if="run" :run="run" />
+      <ActivityList v-if="run" :key="run.runId || conversationId" :run="run" />
       <article v-if="run?.content" class="message message-assistant streaming-message">
         <div class="message-author">Claude</div>
         <div class="message-body markdown-body live-text">{{ run.content }}</div>

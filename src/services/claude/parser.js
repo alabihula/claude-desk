@@ -117,7 +117,7 @@ export function parseClaudeEvent(payload) {
       }
       if (block.type === 'tool_use') appendToolEvent(events, block)
     }
-    if (text) events.push({ type: 'full-text', text })
+    if (text) events.push({ type: 'full-text', text, ...(payload.message?.id ? { messageId: payload.message.id } : {}) })
     const tokens = contextTokens(payload.message?.usage)
     if (tokens) events.push({ type: 'usage', tokens, estimated: false })
   }

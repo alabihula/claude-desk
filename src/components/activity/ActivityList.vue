@@ -1,17 +1,16 @@
 <script setup>
 import { computed } from 'vue'
-import { Check, Circle, CircleStop, ShieldAlert, X } from 'lucide-vue-next'
+import { ChevronDown, ShieldAlert } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../stores/workspace'
-import { translateActivity, useI18n } from '../../services/i18n'
+import { useI18n } from '../../services/i18n'
+import { activityPresentation } from '../../services/claude/activityPresentation'
+import ActivityRow from './ActivityRow.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import TaskProgress from './TaskProgress.vue'
 const props = defineProps({ run: { type: Object, required: true } })
 const store = useWorkspaceStore()
-const { language, t } = useI18n()
-const activityLabel = (label) => translateActivity(language.value, label)
-const entries = computed(() => props.run.timeline?.length
-  ? props.run.timeline
-  : props.run.activities.map((activity) => ({ id: `activity:${activity.id}`, type: 'activity', activity })))
+const { t } = useI18n()
+const presentation = computed(() => activityPresentation(props.run))
 </script>
 
 <template>
@@ -26,19 +25,22 @@ const entries = computed(() => props.run.timeline?.length
       <span v-else-if="run.status === 'complete'">{{ t('activity.done') }}</span>
       <span v-else>{{ t('activity.working') }}</span>
     </div>
-    <TaskProgress v-if="run.tasks?.length" :tasks="run.tasks" />
-    <div v-if="entries.length" class="activity-list">
-      <template v-for="entry in entries" :key="entry.id">
-        <ThinkingBlock v-if="entry.type === 'thinking'" :item="entry" />
-        <div v-else class="activity-row">
-          <Check v-if="entry.activity.status === 'success'" :size="14" class="success-icon" />
-          <X v-else-if="entry.activity.status === 'error'" :size="14" class="error-icon" />
-          <CircleStop v-else-if="run.status === 'stopping'" :size="14" />
-          <Circle v-else :size="11" class="running-icon" />
-          <span>{{ activityLabel(entry.activity.label) }}</span>
-        </div>
-      </template>
+    <div v-if="presentation.current.length" class="activity-current">
+      <ActivityRow v-for="entry in presentation.current" :key="entry.id" :activity="entry.activity" :stopping="run.status === 'stopping'" />
     </div>
+    <div v-if="presentation.errors.length" class="activity-errors" role="status">
+      <ActivityRow v-for="entry in presentation.errors" :key="entry.id" :activity="entry.activity" />
+    </div>
+    <details v-if="presentation.entries.length || run.tasks?.length" class="execution-details">
+      <summary><ChevronDown :size="14" /><span>{{ t('activity.executionDetails') }}</span><small v-if="presentation.total">{{ t('activity.toolProgress', { completed: presentation.completed, total: presentation.total }) }}</small></summary>
+      <TaskProgress v-if="run.tasks?.length" :tasks="run.tasks" />
+      <div class="activity-list">
+      <template v-for="entry in presentation.entries" :key="entry.id">
+        <ThinkingBlock v-if="entry.type === 'thinking'" :item="entry" />
+        <ActivityRow v-else :activity="entry.activity" :stopping="run.status === 'stopping'" />
+      </template>
+      </div>
+    </details>
     <p v-if="run.error" class="run-error">{{ run.error }}</p>
     <button v-if="run.permissionDenied" class="permission-callout" @click="store.permissionsOpen = true">
       <ShieldAlert :size="15" /><span>{{ t('activity.needsAccess') }}</span><strong>{{ t('activity.reviewPermissions') }}</strong>

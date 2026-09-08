@@ -14,7 +14,7 @@ export function requestsPersistentService(prompt = '') {
 }
 
 export function withRuntimeGuidance(prompt = '') {
-  const guidance = [DOWNLOAD_GUIDANCE]
+  const guidance = [DOWNLOAD_GUIDANCE, 'Claude Desk communication guidance: Use the user\'s language. Keep progress updates brief and only send them when there is a meaningful finding, change of approach, or a question for the user. The app already displays tool activity, so do not narrate every read, search or command. Keep raw payloads such as Base64 out of user-facing prose unless explicitly requested. Make the final answer self-contained with the result, verification and unresolved issues; avoid repeating the execution log. This guidance does not limit necessary tools, verification, warnings or user-requested detail.']
   if (requestsPersistentService(prompt)) guidance.push(SERVICE_GUIDANCE)
   return [prompt.trim(), ...guidance].filter(Boolean).join('\n\n')
 }

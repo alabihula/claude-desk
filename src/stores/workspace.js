@@ -12,6 +12,7 @@ import { externalSkillPrompt } from '../services/skills'
 import { fileSelectionsPrompt, projectFileOpenMode } from '../services/localFiles'
 import { configuredModel, removeMigratedLegacySettings } from '../services/claude/settings'
 import { applyRunTimelineEvent } from '../services/claude/timeline'
+import { applyResponseTextEvent } from '../services/claude/responseText'
 import { applyRunTaskEvent } from '../services/claude/tasks'
 import { diagnosticMessage } from '../services/claude/diagnostics'
 import { contextForModel, contextModelKey, contextStatus, shouldAutoCompact } from '../services/claude/context'
@@ -644,6 +645,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (payload.kind === 'stream') {
         for (const event of parseClaudeEvent(payload.data)) {
           if (applyRunTaskEvent(run, event)) continue
+          if (applyResponseTextEvent(run, event)) continue
           if (applyRunTimelineEvent(run, event)) continue
           if (event.type === 'compact-result') {
             run.compactResult = event.success ? 'success' : 'failed'
@@ -652,8 +654,6 @@ export const useWorkspaceStore = defineStore('workspace', {
               run.error = event.error || 'Claude could not compact this conversation.'
             }
           }
-          if (event.type === 'text') { run.content += event.text; run.sawPartialText = true }
-          if (event.type === 'full-text' && !run.sawPartialText && !run.content) run.content = event.text
           if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
           if (event.type === 'mcp-runtime') {
             run.mcpRuntime = { ...event.runtime, runId: payload.runId }

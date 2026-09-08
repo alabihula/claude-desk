@@ -254,8 +254,23 @@ button.workspace-tab { padding: 0 10px; gap: 6px; }.workspace-tab:hover { backgr
 .task-in_progress { color: var(--text); }.task-in_progress .task-checkbox { border-color: var(--accent); color: var(--accent); }.task-in_progress .task-checkbox svg { animation: spin .9s linear infinite; }
 .task-completed > span:last-child { color: var(--text-faint); text-decoration: line-through; }.task-completed .task-checkbox { border-color: var(--success); background: var(--success); color: white; }
 .activity-list { margin: 10px 0 0 4px; padding-left: 11px; border-left: 1px solid var(--border); }
+.activity-current, .activity-errors { margin: 6px 0 6px 19px; min-width: 0; }
+.execution-details { margin-top: 8px; min-width: 0; }
+.execution-details > summary { display: flex; align-items: center; gap: 7px; min-height: 28px; cursor: pointer; color: var(--text-muted); font-size: 12px; list-style: none; }
+.execution-details > summary::-webkit-details-marker { display: none; }
+.execution-details > summary small { font-size: 11px; opacity: .8; }
+.execution-details > summary svg { flex-shrink: 0; transition: transform 160ms ease; }
+.execution-details[open] > summary svg { transform: rotate(180deg); }
+.execution-details .activity-list { max-height: 320px; overflow: auto; overscroll-behavior: contain; }
+.activity-row > svg { flex-shrink: 0; }
+.activity-error span { white-space: pre-wrap !important; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .execution-details > summary svg { transition: none; } }
 .activity-row { min-height: 25px; display: flex; align-items: center; gap: 8px; color: var(--text-muted); font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .activity-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-block, .activity-list, .thinking-block { min-width: 0; max-width: 100%; }
+/* Activity details live outside .message-body; continuous tokens need the
+   same wrapping boundary as prose, including Base64, URLs and OS paths. */
+.thinking-block p, .run-error { overflow-wrap: anywhere; word-break: break-word; }
 .thinking-block { margin: 3px 0 6px; color: var(--text-muted); }
 .thinking-block summary { min-height: 28px; display: grid; grid-template-columns: 15px minmax(0, 1fr) 15px; align-items: center; gap: 7px; cursor: pointer; list-style: none; font-size: 11.5px; }
 .thinking-block summary::-webkit-details-marker { display: none; }

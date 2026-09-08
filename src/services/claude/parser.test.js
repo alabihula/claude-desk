@@ -25,7 +25,7 @@ describe('parseClaudeEvent', () => {
       message: { id: 'message-1', content: [{ type: 'thinking', thinking: 'Inspect the project.' }, { type: 'text', text: 'Done.' }] },
     })
     expect(events).toContainEqual({ type: 'full-thinking', messageId: 'message-1', index: 0, text: 'Inspect the project.', hidden: false })
-    expect(events).toContainEqual({ type: 'full-text', text: 'Done.' })
+    expect(events).toContainEqual({ type: 'full-text', text: 'Done.', messageId: 'message-1' })
   })
 
   it('turns tool use and result events into readable activity state', () => {

@@ -52,7 +52,8 @@ const mcpServers = ref([])
 const mcpLoading = ref(false)
 const mcpRetryingName = ref('')
 const mcpError = ref('')
-const mcpLive = useMcpRuntime(store, mcpPanelOpen)
+const mcpChecking = computed(() => mcpLoading.value || Boolean(mcpRetryingName.value))
+const mcpLive = useMcpRuntime(store, mcpPanelOpen, mcpChecking)
 let mcpRequestId = 0
 const skillQuery = computed(() => slashSkillQuery(text.value))
 const builtInCommands = computed(() => [{
@@ -194,7 +195,7 @@ function chooseSkill(skill) {
 
 async function loadMcpServers() {
   const projectPath = store.activeProject?.path
-  if (!projectPath || mcpLoading.value || mcpRetryingName.value) return
+  if (!projectPath || mcpChecking.value || mcpLive.busy.value) return
   const requestId = ++mcpRequestId
   mcpLoading.value = true
   mcpError.value = ''
@@ -213,7 +214,7 @@ async function loadMcpServers() {
 
 async function retryMcpServer(name) {
   const projectPath = store.activeProject?.path
-  if (!projectPath || mcpLoading.value || mcpRetryingName.value) return
+  if (!projectPath || mcpChecking.value || mcpLive.busy.value) return
   const requestId = ++mcpRequestId
   mcpRetryingName.value = name
   try {

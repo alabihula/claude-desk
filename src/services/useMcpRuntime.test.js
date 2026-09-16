@@ -4,14 +4,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useMcpRuntime } from './useMcpRuntime'
 import { desktop } from './desktop'
 vi.mock('./desktop', () => ({ desktop: { inspectRunMcp: vi.fn() } }))
-let app, store, open, state
+let app, store, open, state, checking
 const flush = async () => { await Promise.resolve(); await nextTick(); await Promise.resolve() }
 beforeEach(() => {
   vi.useFakeTimers()
   desktop.inspectRunMcp.mockReset().mockResolvedValue({ source: 'live', servers: [{ name: 'test', status: 'pending', toolCount: null }] })
   store = reactive({ activeConversationId: 'a', activeRun: { runId: 'one', status: 'running' }, mcpRuntimeByConversation: {} })
   open = ref(true)
-  app = createApp({ setup() { state = useMcpRuntime(store, open); return () => h('div') } })
+  checking = ref(false)
+  app = createApp({ setup() { state = useMcpRuntime(store, open, checking); return () => h('div') } })
   app.mount(document.createElement('div'))
 })
 afterEach(() => { app.unmount(); vi.useRealTimers() })
@@ -58,4 +59,32 @@ it('discards results after stop even before the watcher runs', async () => {
   finish({ source: 'live', servers: [{ name: 'stale' }] })
   await flush()
   expect(store.mcpRuntimeByConversation.a.servers[0].name).toBe('test')
+})
+
+it('serializes configuration checks with automatic polling and live reconnects', async () => {
+  await flush()
+  checking.value = true
+  await state.refresh('test')
+  await vi.advanceTimersByTimeAsync(6000)
+  expect(desktop.inspectRunMcp).toHaveBeenCalledTimes(1)
+  checking.value = false
+  await flush()
+  expect(desktop.inspectRunMcp).toHaveBeenCalledTimes(2)
+})
+it('does not repeat an in-flight reconnect when the panel is closed and reopened', async () => {
+  await flush()
+  let finish
+  desktop.inspectRunMcp.mockReturnValue(new Promise((resolve) => { finish = resolve }))
+  state.refresh('test')
+  open.value = false
+  await flush()
+  open.value = true
+  await flush()
+  await state.refresh('test')
+  await vi.advanceTimersByTimeAsync(3000)
+  expect(desktop.inspectRunMcp).toHaveBeenCalledTimes(2)
+  expect(state.busy.value).toBe(true)
+  finish({ source: 'live', servers: [] })
+  await flush()
+  expect(state.busy.value).toBe(false)
 })

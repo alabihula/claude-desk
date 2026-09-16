@@ -10,7 +10,7 @@ describe('MCP availability evidence', () => {
   })
   it('distinguishes slow startup, unknown counts, empty lists and ready discovery', () => {
     expect(mcpRows(config, runtime('pending', null))[0].state).toBe('loading')
-    expect(mcpRows(config, runtime('connected', null))[0].state).toBe('unconfirmed')
+    expect(mcpRows(config, runtime('connected', null))[0].state).toBe('connected')
     expect(mcpRows(config, runtime('connected', 0))[0].state).toBe('empty')
     expect(mcpRows(config, runtime('connected', 2))[0].state).toBe('ready')
     expect(mcpRows(config, runtime('failed', 2))[0].state).toBe('failed')

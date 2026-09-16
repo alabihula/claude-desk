@@ -1,5 +1,5 @@
 // A health probe, an init snapshot and live discovery are different evidence.
-export function mcpRows(configured, runtime) {
+export function mcpRows(configured, runtime, active = true) {
   const names = new Set([...configured.map((s) => s.name), ...(runtime?.servers || []).map((s) => s.name)])
   return [...names].map((name) => {
     const config = configured.find((s) => s.name === name)
@@ -12,10 +12,29 @@ export function mcpRows(configured, runtime) {
       else if (current.status === 'pending') state = 'loading'
       else if (current.status === 'connected' && current.toolCount > 0) state = 'ready'
       else if (current.status === 'connected' && current.toolCount === 0) state = 'empty'
+      else if (current.status === 'connected') state = 'connected'
     }
-    const message = current?.message || config?.message || ''
+    const message = (active && current?.message) || config?.message || ''
     return { ...config, name, configured: Boolean(config), current, state, issue: mcpIssue(message, config?.detail), message: safeMcpDetail(message), detail: safeMcpDetail(config?.detail), checkStatus: config?.status || 'unknown' }
   })
+}
+
+export function mcpToolsLabel(server, { active, runtime, liveError }) {
+  if (!active || liveError) return server.current?.toolCount == null ? 'mcp.previousUnknown' : 'mcp.previousTools'
+  if (server.current?.toolCount == null) return 'mcp.countUnknown'
+  return runtime?.source === 'live' ? 'mcp.observedTools' : 'mcp.snapshotTools'
+}
+
+export function mcpRuntimeLabel(server, { runtime, liveError, liveBusy }) {
+  if (liveError) return 'mcp.runtimeReadFailed'
+  if (runtime?.source === 'live') return server.current ? `mcp.availability.${server.state}` : 'mcp.runtimeNotLoaded'
+  if (server.current) return 'mcp.startupOnly'
+  return liveBusy ? 'mcp.runtimeReading' : 'mcp.runtimeNotRead'
+}
+
+export function canReconnectMcp(server, { active, runtime, liveError }) {
+  // Unknown tool counts, an old snapshot and an empty tool list are not a failed connection.
+  return active && !liveError && runtime?.source === 'live' && server.state === 'failed'
 }
 
 export function mcpIssue(message = '', command = '') {

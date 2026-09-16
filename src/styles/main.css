@@ -331,6 +331,19 @@ button.workspace-tab { padding: 0 10px; gap: 6px; }.workspace-tab:hover { backgr
 .mcp-server-status { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }.mcp-server-status em { padding: 3px 7px; border-radius: 999px; background: var(--surface-hover); color: var(--text-faint); font-size: 9px; font-style: normal; white-space: nowrap; }.mcp-server-status em.status-connected { background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success); }.mcp-server-status em.status-failed { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }.mcp-server-status em.status-pending, .mcp-server-status em.status-authRequired { background: var(--accent-soft); color: var(--accent-strong); }.mcp-server-retry { height: 26px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--app-bg); color: var(--text-muted); font-size: 9px; white-space: nowrap; }.mcp-server-retry:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }.mcp-server-retry:disabled { opacity: .58; cursor: default; }
 .mcp-panel-state { min-height: 185px; padding: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; text-align: center; color: var(--text-faint); }.mcp-panel-state > strong { color: var(--text-muted); font-size: 12px; }.mcp-panel-state > small { max-width: 430px; font-size: 10px; line-height: 1.55; }.mcp-panel-state.error > svg { color: var(--danger); }.mcp-panel-state > button { height: 30px; margin-top: 5px; padding: 0 12px; border-radius: 7px; background: var(--surface-hover); color: var(--text-muted); font-size: 10px; }.mcp-panel-state > button:hover { background: var(--accent-soft); color: var(--accent-strong); }
 .spinning { animation: spin .8s linear infinite; }
+.mcp-panel-notice { padding: 10px 13px; display: grid; gap: 7px; color: var(--text-faint); font-size: 11px; line-height: 1.6; border-bottom: 1px solid var(--border-soft); }
+.mcp-panel-notice button { justify-self: start; color: var(--accent); font-size: 11px; }
+.mcp-notice-error { color: var(--danger); }
+.mcp-server-list article { align-items: start; }
+.mcp-server-list article > svg { margin-top: 3px; }
+.mcp-server-list article strong { overflow-wrap: anywhere; white-space: normal; }
+.mcp-server-list article small { white-space: normal; overflow-wrap: anywhere; font-family: inherit; line-height: 1.5; }
+.mcp-server-list details { font-size: 11px; color: var(--text-faint); }
+.mcp-server-list summary { cursor: pointer; width: fit-content; }
+.mcp-server-list details p { margin: 7px 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.6; }
+.mcp-server-status { flex-direction: column; align-items: flex-end; }
+.mcp-server-status em.status-ready { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
+.mcp-server-status em.status-empty, .mcp-server-status em.status-loading { color: var(--accent); background: var(--accent-soft); }
 .composer-actions { display: flex; align-items: center; gap: 9px; }
 .attach-button { height: 30px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 12px; }
 .attach-button:hover { background: var(--surface-hover); color: var(--text); }

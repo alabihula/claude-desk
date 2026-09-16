@@ -296,7 +296,7 @@ fn value_type(value: Option<&Value>) -> &'static str {
     }
 }
 
-fn redact_line(line: &str) -> String {
+pub(crate) fn redact_line(line: &str) -> String {
     let mut redacted = line.chars().take(MAX_LINE_CHARS).collect::<String>();
     if let Some(home) = dirs::home_dir().and_then(|path| path.to_str().map(str::to_owned)) {
         redacted = redacted.replace(&home, "<HOME>");

@@ -346,10 +346,10 @@ describe('ChatComposer attachments', () => {
     expect(textarea.value).toBe('')
     expect(desktop.listMcpServers).toHaveBeenCalledWith('/tmp/project', 'claude', {})
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('filesystem')
-    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Connected')
-    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Latest run: 2 tools available')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Connection check: Passed')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Startup snapshot: 2 tools; not a live status')
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('figma-mcp-front')
-    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('Latest run: server was not loaded')
+    expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('availability is unconfirmed')
     expect(root.querySelector('.mcp-server-panel')?.textContent).toContain('removed-server')
     expect(root.querySelector('.mcp-server-retry')).toBeNull()
     expect(store.sendMessage).not.toHaveBeenCalled()
@@ -449,7 +449,7 @@ describe('ChatComposer attachments', () => {
     await nextTick()
     expect(desktop.listMcpServers).toHaveBeenCalledTimes(2)
     expect(retry.disabled).toBe(true)
-    expect(retry.textContent).toContain('Retrying')
+    expect(retry.textContent).toContain('Checking')
 
     finishRetry([
       { name: 'filesystem', detail: 'node server.js', status: 'connected', message: '' },
@@ -460,7 +460,7 @@ describe('ChatComposer attachments', () => {
 
     expect(root.querySelectorAll('.mcp-server-retry')).toHaveLength(0)
     expect(root.querySelector('.mcp-server-list')?.textContent).toContain('sentry')
-    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('Connected')
+    expect(root.querySelector('.mcp-server-list')?.textContent).toContain('Connection check: Passed')
   })
 
   it('keeps a failed MCP row retryable when the health command fails', async () => {

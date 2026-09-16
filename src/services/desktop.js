@@ -42,6 +42,7 @@ export const desktop = {
   gitDiff: (projectPath, path) => invoke('git_diff', { projectPath, path }),
   gitCommit: (projectPath, message, push) => invoke('git_commit', { projectPath, message, push }),
   listMcpServers: (projectPath, command, env) => invoke('list_mcp_servers', { projectPath, command, env }),
+  inspectRunMcp: (conversationId, runId, reconnect = null) => invoke('inspect_run_mcp', { conversationId, runId, reconnect }),
   listClaudeSkills: (projectPath) => invoke('list_claude_skills', { projectPath }),
   checkClaude: (command, env) => invoke('check_claude', { command, env }),
   sendClaude: (request) => invoke('send_claude', { request }),

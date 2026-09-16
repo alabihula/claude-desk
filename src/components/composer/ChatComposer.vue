@@ -9,6 +9,7 @@ import { resizeComposerTextarea } from '../../services/composerTextarea'
 import { matchingSkills, selectedSkillInput, slashSkillQuery } from '../../services/skills'
 import { useCloseOnOutsidePointerDown } from '../../services/clickOutside'
 import { desktop } from '../../services/desktop'
+import { useMcpRuntime } from '../../services/useMcpRuntime'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { configuredModel } from '../../services/claude/settings'
 import ComposerRuntimeControls from './ComposerRuntimeControls.vue'
@@ -49,6 +50,7 @@ const mcpServers = ref([])
 const mcpLoading = ref(false)
 const mcpRetryingName = ref('')
 const mcpError = ref('')
+const mcpLive = useMcpRuntime(store, mcpPanelOpen)
 let mcpRequestId = 0
 const skillQuery = computed(() => slashSkillQuery(text.value))
 const builtInCommands = computed(() => [{
@@ -216,7 +218,7 @@ async function retryMcpServer(name) {
   } catch (error) {
     if (requestId === mcpRequestId && store.activeProject?.path === projectPath) {
       mcpServers.value = mcpServers.value.map((server) => server.name === name
-        ? { ...server, message: t('mcp.retryFailed', { message: String(error) }) }
+        ? { ...server, status: 'unknown', message: t('mcp.retryFailed', { message: String(error) }) }
         : server)
     }
   } finally {
@@ -340,12 +342,18 @@ onBeforeUnmount(() => {
       <div v-if="mcpPanelOpen" ref="mcpPanelRoot" class="mcp-panel-anchor">
         <McpServerPanel
           :servers="mcpServers"
-          :runtime="store.mcpRuntimeByConversation[store.activeConversationId] || null"
+          :runtime="mcpLive.runtime.value"
+          :active="mcpLive.active.value"
+          :live-busy="mcpLive.busy.value"
+          :live-error="mcpLive.error.value"
+          :reconnecting="mcpLive.retrying.value"
           :loading="mcpLoading"
           :retrying-name="mcpRetryingName"
           :error="mcpError"
           @refresh="loadMcpServers"
           @retry="retryMcpServer"
+          @live-refresh="mcpLive.refresh()"
+          @reconnect="mcpLive.refresh($event)"
           @close="closeMcpPanel"
         />
       </div>

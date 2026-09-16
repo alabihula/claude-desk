@@ -6,6 +6,7 @@ mod diagnostics;
 mod files;
 mod git;
 mod mcp;
+mod mcp_control;
 mod platform;
 mod runtime;
 mod skills;
@@ -75,6 +76,7 @@ pub fn run() {
             git::git_diff,
             git::git_commit,
             mcp::list_mcp_servers,
+            claude::inspect_run_mcp,
             skills::list_claude_skills,
             claude::check_claude,
             claude::send_claude,

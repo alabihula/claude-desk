@@ -27,6 +27,7 @@ struct RunningProcess {
     run_id: String,
     input: Arc<AsyncMutex<Option<ChildStdin>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    mcp_control: Arc<crate::mcp_control::McpControl>,
 }
 
 #[derive(Clone)]
@@ -522,6 +523,7 @@ pub async fn send_claude(
         child.stdin.take().ok_or("Claude stdin is unavailable")?,
     )));
     let pending_permissions = Arc::new(Mutex::new(HashMap::new()));
+    let mcp_control = Arc::new(crate::mcp_control::McpControl::default());
     // Initialize the bidirectional protocol before sending the first user turn.
     write_input(
         &input,
@@ -555,6 +557,7 @@ pub async fn send_claude(
                 run_id: run_id.clone(),
                 input: input.clone(),
                 pending_permissions: pending_permissions.clone(),
+                mcp_control: mcp_control.clone(),
             },
         );
 
@@ -587,6 +590,7 @@ pub async fn send_claude(
                         let valid_json = parsed.is_ok();
                         let payload = parsed.unwrap_or_else(|_| serde_json::json!({ "text": line }));
                         run_diagnostics.observe_stdout(&line, &payload, valid_json);
+                        mcp_control.receive(&payload);
                         if let Some((request_id, permission, event)) = permission_request(&payload) {
                             let disposition = control_request_disposition(&permission, auto_approve_tools);
                             if disposition == ControlRequestDisposition::AutoApprove {
@@ -624,6 +628,7 @@ pub async fn send_claude(
                             emit(&app_for_task, &conversation_id, &run_for_task, "stream", payload);
                         }
                         if is_result {
+                            mcp_control.close();
                             close_input(&input_for_task).await;
                         }
                     }
@@ -640,6 +645,7 @@ pub async fn send_claude(
                 }
             }
         }
+        mcp_control.close();
         let status = child.wait().await;
         let previous_context = data::read_context_stats(&app_for_task, &conversation_id)
             .ok()
@@ -839,6 +845,86 @@ pub async fn respond_claude_question(
         response
     };
     write_input(&input, &response).await
+}
+
+#[tauri::command]
+pub async fn inspect_run_mcp(
+    state: State<'_, ClaudeProcesses>,
+    conversation_id: String,
+    run_id: String,
+    reconnect: Option<String>,
+) -> Result<Value, String> {
+    let (input, control) = {
+        let running = state
+            .running
+            .lock()
+            .map_err(|_| "Claude process state unavailable")?;
+        let process = running
+            .get(&conversation_id)
+            .ok_or("Claude run has ended")?;
+        if process.run_id != run_id {
+            return Err("MCP request belongs to an older run".into());
+        }
+        (process.input.clone(), process.mcp_control.clone())
+    };
+    let status = request_mcp_control(
+        &input,
+        &control,
+        serde_json::json!({"subtype":"mcp_status"}),
+        10,
+    )
+    .await?;
+    if let Some(name) = reconnect {
+        let normalized = crate::mcp_control::server_status(&status)?;
+        if !normalized["servers"]
+            .as_array()
+            .is_some_and(|servers| servers.iter().any(|server| server["name"] == name))
+        {
+            return Err("MCP server is not part of this Claude run".into());
+        }
+        request_mcp_control(
+            &input,
+            &control,
+            serde_json::json!({"subtype":"mcp_reconnect", "serverName":name}),
+            60,
+        )
+        .await?;
+        let refreshed = request_mcp_control(
+            &input,
+            &control,
+            serde_json::json!({"subtype":"mcp_status"}),
+            10,
+        )
+        .await?;
+        return crate::mcp_control::server_status(&refreshed);
+    }
+    crate::mcp_control::server_status(&status)
+}
+
+async fn request_mcp_control(
+    input: &Arc<AsyncMutex<Option<ChildStdin>>>,
+    control: &crate::mcp_control::McpControl,
+    request: Value,
+    seconds: u64,
+) -> Result<Value, String> {
+    let id = Uuid::new_v4().to_string();
+    let receiver = control.register(id.clone())?;
+    let result = async {
+        write_input(
+            input,
+            &serde_json::json!({"type":"control_request", "request_id":id, "request":request}),
+        )
+        .await?;
+        timeout(Duration::from_secs(seconds), receiver)
+            .await
+            .map_err(|_| {
+                "MCP request timed out; this Claude Code version may not support it".to_string()
+            })?
+            .map_err(|_| "Claude run ended before MCP status was confirmed".to_string())?
+    }
+    .await;
+    control.remove(&id);
+    result
 }
 
 #[tauri::command]

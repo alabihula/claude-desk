@@ -657,7 +657,11 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
           if (event.type === 'mcp-runtime') {
             run.mcpRuntime = { ...event.runtime, runId: payload.runId }
-            this.mcpRuntimeByConversation[payload.conversationId] = run.mcpRuntime
+            const observed = this.mcpRuntimeByConversation[payload.conversationId]
+            // A late init frame must not replace a newer live capability query.
+            if (observed?.runId !== payload.runId || observed?.source !== 'live') {
+              this.mcpRuntimeByConversation[payload.conversationId] = run.mcpRuntime
+            }
           }
           if (event.type === 'result') {
             run.receivedResult = true

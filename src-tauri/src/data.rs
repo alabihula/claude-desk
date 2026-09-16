@@ -456,6 +456,40 @@ pub fn touch_conversation(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+pub fn conversation_session(app: &AppHandle, id: &str) -> Result<String, String> {
+    connect(app)?
+        .query_row(
+            "SELECT claude_session_id FROM conversations WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())
+}
+
+pub fn replace_conversation_session(
+    app: &AppHandle,
+    id: &str,
+    previous: &str,
+    next: &str,
+) -> Result<(), String> {
+    let mut connection = connect(app)?;
+    let transaction = connection.transaction().map_err(|e| e.to_string())?;
+    let changed = transaction.execute(
+        "UPDATE conversations SET claude_session_id = ?1 WHERE id = ?2 AND claude_session_id = ?3",
+        params![next, id, previous],
+    ).map_err(|e| e.to_string())?;
+    if changed != 1 {
+        return Err("Conversation changed while recovering; please retry".into());
+    }
+    transaction
+        .execute(
+            "DELETE FROM conversation_context WHERE conversation_id = ?1",
+            [id],
+        )
+        .map_err(|e| e.to_string())?;
+    transaction.commit().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
     connect(&app)?

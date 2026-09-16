@@ -26,10 +26,12 @@ function tokens(value) {
   return String(value)
 }
 
-useCloseOnOutsidePointerDown(details, () => details.value?.removeAttribute('open'))
+function close() { details.value?.removeAttribute('open') }
+defineExpose({ close })
+useCloseOnOutsidePointerDown(details, close)
 
 async function compact() {
-  details.value?.removeAttribute('open')
+  close()
   await store.compactConversation()
 }
 </script>

@@ -90,6 +90,33 @@ describe('workspace supplemental messages', () => {
     desktop.syncAppLanguage.mockResolvedValue(false)
   })
 
+  it('classifies tool-origin image rejection and pauses queued text until explicit continuation', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    await store.sendMessage('只回答文字')
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'stream', data: {
+      type: 'assistant', isApiErrorMessage: true, error: 'unknown',
+      message: { content: [{ type: 'text', text: 'API Error: 400 Model only support text input' }] },
+    } })
+    expect(store.activeRun.diagnosticKind).toBe('unsupported-media')
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: false } })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(desktop.sendClaude).not.toHaveBeenCalled()
+    expect(store.activeMessages.some((m) => m.content === 'claude-desk:diagnostic:unsupported-media:run-current')).toBe(true)
+  })
+
+  it('uses the recovered persisted session for subsequent conversation messages', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun('starting')
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'started', data: {
+      sessionId: 'recovered-session', recoveredSession: true,
+    } })
+    expect(store.activeConversation.claudeSessionId).toBe('recovered-session')
+    await store.sendMessage('继续')
+    expect(store.activeQueuedMessages[0].sessionId).toBe('recovered-session')
+  })
+
   it('keeps the selected project when a new-conversation click passes an event argument', async () => {
     const store = setupStore()
     store.conversations = []

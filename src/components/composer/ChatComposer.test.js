@@ -622,3 +622,57 @@ describe('ChatComposer attachments', () => {
     expect(store.snippetDrafts['conversation-1']).toBeUndefined()
   })
 })
+
+
+describe('composer panel dismissal', () => {
+  async function mountComposer(running = false) {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useWorkspaceStore()
+    store.projects = [{ id: 'project-1', path: '/tmp/project' }]
+    store.conversations = [{ id: 'conversation-1', projectId: 'project-1' }]
+    store.activeProjectId = 'project-1'
+    store.activeConversationId = 'conversation-1'
+    if (running) store.runs['conversation-1'] = { status: 'running', context: {} }
+    store.sendMessage = vi.fn(() => new Promise(() => {}))
+    app = createApp({ render: () => h(ChatComposer) })
+    app.use(pinia)
+    app.mount(root)
+    await flushPromises()
+    return store
+  }
+
+  it.each(['keyboard', 'button', 'queued'])('closes model, effort, context and MCP panels immediately on %s submission', async (method) => {
+    const store = await mountComposer(method === 'queued')
+    const textarea = root.querySelector('textarea')
+    textarea.value = '/mcp'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(root.querySelector('.mcp-server-panel')).not.toBeNull()
+    for (const menu of root.querySelectorAll('details')) menu.open = true
+    textarea.value = '继续文字问答'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    if (method === 'button') root.querySelector('.send-button:not(.stop-button)').click()
+    else textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(store.sendMessage).toHaveBeenCalledOnce()
+    expect(root.querySelector('.mcp-server-panel')).toBeNull()
+    expect(root.querySelectorAll('details[open]')).toHaveLength(0)
+  })
+
+  it('keeps panels open when Chinese IME Enter has not submitted the message', async () => {
+    const store = await mountComposer()
+    const textarea = root.querySelector('textarea')
+    const model = root.querySelector('.runtime-control')
+    model.open = true
+    textarea.value = '输入中文'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(store.sendMessage).not.toHaveBeenCalled()
+    expect(model.open).toBe(true)
+  })
+})

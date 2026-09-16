@@ -108,6 +108,7 @@ export function parseClaudeEvent(payload) {
   if (payload.type === 'assistant') {
     const blocks = payload.message?.content || []
     const text = blocks.filter((block) => block.type === 'text').map((block) => block.text).join('')
+    if (payload.isApiErrorMessage || payload.error) events.push({ type: 'api-error', message: text })
     for (const [index, block] of blocks.entries()) {
       if (block.type === 'thinking') {
         events.push({ type: 'full-thinking', messageId: payload.message?.id || '', index, text: block.thinking || '', hidden: false })

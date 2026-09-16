@@ -9,6 +9,7 @@ mod mcp;
 mod mcp_control;
 mod platform;
 mod runtime;
+mod session_recovery;
 mod skills;
 
 use claude::ClaudeProcesses;

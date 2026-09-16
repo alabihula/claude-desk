@@ -49,6 +49,13 @@ pub fn context_window_for_model(
 }
 
 pub fn latest_session_usage(config_dir: &Path, session_id: &str) -> Result<Option<i64>, String> {
+    session_path(config_dir, session_id)?
+        .map(|path| parse_session_usage(&path))
+        .transpose()
+        .map(Option::flatten)
+}
+
+pub fn session_path(config_dir: &Path, session_id: &str) -> Result<Option<PathBuf>, String> {
     Uuid::parse_str(session_id).map_err(|_| "Invalid Claude session identifier".to_string())?;
     let projects = config_dir.join("projects");
     let projects = match fs::canonicalize(projects) {
@@ -66,7 +73,7 @@ pub fn latest_session_usage(config_dir: &Path, session_id: &str) -> Result<Optio
             Ok(path) if path.starts_with(&projects) && path.is_file() => path,
             _ => continue,
         };
-        return parse_session_usage(&candidate);
+        return Ok(Some(candidate));
     }
     Ok(None)
 }

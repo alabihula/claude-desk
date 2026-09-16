@@ -1,4 +1,4 @@
-use crate::{context, data, diagnostics, platform, runtime, skills};
+use crate::{context, data, diagnostics, platform, runtime, session_recovery, skills};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -373,7 +373,7 @@ fn question_response(
 pub async fn send_claude(
     app: AppHandle,
     state: State<'_, ClaudeProcesses>,
-    request: ClaudeRequest,
+    mut request: ClaudeRequest,
 ) -> Result<String, String> {
     {
         let running = state
@@ -436,6 +436,28 @@ pub async fn send_claude(
     runtime::normalize_model(Some(context_model))?;
     let context_model = context_model.to_string();
     let effort = runtime::normalize_effort(request.effort.as_deref())?;
+    // Resolve persisted identity, not a queued message's possibly pre-recovery snapshot.
+    request.session_id = data::conversation_session(&app, &request.conversation_id)?;
+    let mut recovered_session = false;
+    if request.resume {
+        if let Some(session_id) =
+            session_recovery::recover(&context_config_dir, &request.session_id)?
+        {
+            data::replace_conversation_session(
+                &app,
+                &request.conversation_id,
+                &request.session_id,
+                &session_id,
+            )?;
+            request.session_id = session_id;
+            request.prompt = format!(
+                "{}\n\n{}",
+                request.prompt,
+                session_recovery::RECOVERY_GUIDANCE
+            );
+            recovered_session = true;
+        }
+    }
     let runtime_args = runtime::with_runtime_overrides(
         request.args.clone().unwrap_or_default(),
         model.as_deref(),
@@ -574,7 +596,7 @@ pub async fn send_claude(
             &conversation_id,
             &run_for_task,
             "started",
-            serde_json::json!({ "pid": pid }),
+            serde_json::json!({ "pid": pid, "sessionId": session_id, "recoveredSession": recovered_session }),
         );
         let mut stdout_lines = BufReader::new(stdout).lines();
         let mut stderr_lines = BufReader::new(stderr).lines();

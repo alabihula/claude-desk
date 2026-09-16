@@ -25,6 +25,8 @@ const { t } = useI18n()
 const text = ref('')
 const skillDrafts = ref({})
 const input = ref(null)
+const runtimeControls = ref(null)
+const contextMeter = ref(null)
 const adding = ref(false)
 const runtimeSaving = ref(false)
 const composition = { composing: false, compositionEndedAt: -Infinity }
@@ -126,12 +128,20 @@ async function send() {
   const outgoingSnippets = snippets.value
   const content = text.value
   const skill = selectedSkill.value
+  closePanels()
   text.value = ''
   selectedSkill.value = null
   store.clearAttachmentDrafts(conversationId)
   store.clearSnippetDrafts(conversationId)
   store.setDraft(conversationId, '')
   await store.sendMessage(content, outgoing, skill, outgoingSnippets)
+}
+
+function closePanels() {
+  mcpPanelOpen.value = false
+  skillMenuDismissed.value = true
+  runtimeControls.value?.close()
+  contextMeter.value?.close()
 }
 
 function keydown(event) {
@@ -281,6 +291,7 @@ watch(skillQuery, (next, previous) => {
   if (next !== null && previous === null) loadSkills()
 })
 watch(activeConversationId, (next, previous) => {
+  closePanels()
   if (previous && previous !== next) store.setDraft(previous, text.value)
   text.value = next ? store.drafts[next] || '' : ''
   nextTick(resizeInput)
@@ -371,8 +382,9 @@ onBeforeUnmount(() => {
         <button class="attach-button" :disabled="adding" :title="t('composer.attachFiles')" @click="chooseFiles">
           <Paperclip :size="17" /> <span>{{ t(adding ? 'composer.adding' : 'composer.attach') }}</span>
         </button>
-        <ContextMeter />
+        <ContextMeter ref="contextMeter" />
         <ComposerRuntimeControls
+          ref="runtimeControls"
           v-if="activeConversation"
           :model="activeConversation.model || ''"
           :effort="activeConversation.effort || ''"

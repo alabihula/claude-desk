@@ -14,7 +14,7 @@ import { configuredModel, removeMigratedLegacySettings } from '../services/claud
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 import { applyResponseTextEvent } from '../services/claude/responseText'
 import { applyRunTaskEvent } from '../services/claude/tasks'
-import { diagnosticMessage } from '../services/claude/diagnostics'
+import { diagnosticMessage, isUnsupportedMediaError } from '../services/claude/diagnostics'
 import { contextForModel, contextModelKey, contextStatus, shouldAutoCompact } from '../services/claude/context'
 import { applyDisplaySettings, normalizeConversationDensity } from '../services/displaySettings'
 
@@ -629,7 +629,18 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
         return
       }
-      if (payload.kind === 'started' && run.status === 'starting') run.status = 'running'
+      if (payload.kind === 'started') {
+        if (run.status === 'starting') run.status = 'running'
+        if (payload.data?.sessionId) {
+          const conversation = this.conversationById(payload.conversationId)
+          if (conversation) conversation.claudeSessionId = payload.data.sessionId
+        }
+        if (payload.data?.recoveredSession) {
+          run.recoveredSession = true
+          run.context = { ...run.context, tokens: 0, window: 0, cumulativeTokens: 0, measured: false }
+          delete this.contextStats[payload.conversationId]
+        }
+      }
       // stderr also carries non-fatal provider diagnostics. The backend keeps a
       // bounded, redacted copy for exports; only structured errors belong in the UI.
       if (payload.kind === 'context') {
@@ -640,10 +651,16 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (run.status !== 'steering' && run.status !== 'stopping') {
           run.status = 'error'
           run.error = payload.data?.message || 'Claude stopped unexpectedly.'
+          if (isUnsupportedMediaError(run.error)) run.diagnosticKind = 'unsupported-media'
         }
       }
       if (payload.kind === 'stream') {
         for (const event of parseClaudeEvent(payload.data)) {
+          if (event.type === 'api-error' && !['stopping', 'steering'].includes(run.status)) {
+            run.status = 'error'
+            run.error = event.message
+            if (isUnsupportedMediaError(event.message)) run.diagnosticKind = 'unsupported-media'
+          }
           if (applyRunTaskEvent(run, event)) continue
           if (applyResponseTextEvent(run, event)) continue
           if (applyRunTimelineEvent(run, event)) continue
@@ -680,6 +697,7 @@ export const useWorkspaceStore = defineStore('workspace', {
             if (event.permissionDenials.length) run.permissionDenied = true
             if (event.error) {
               if (run.status !== 'stopping' && run.status !== 'steering') { run.status = 'error'; run.error = event.errorMessage }
+              if (isUnsupportedMediaError(event.errorMessage)) run.diagnosticKind = 'unsupported-media'
             } else if (!['stopping', 'steering', 'error'].includes(run.status)) run.status = 'finishing'
           }
         }
@@ -731,6 +749,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       const run = this.runs[conversationId]
       if (!run || run.finalized) return
       run.finalized = true
+      if (run.recoveredSession) {
+        try {
+          const message = await desktop.saveMessage(conversationId, 'system', 'claude-desk:media-recovered')
+          ;(this.messages[conversationId] ||= []).push(message)
+        } catch (error) { run.error = String(error) }
+      }
       for (const activity of run.activities) if (activity.status === 'running') activity.status = run.status === 'complete' ? 'success' : 'error'
       if (run.context.measured || run.context.window) this.contextStats[conversationId] = { ...run.context }
       if (run.operation === 'compact' && run.status === 'complete') {

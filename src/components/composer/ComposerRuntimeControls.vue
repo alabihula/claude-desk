@@ -39,6 +39,8 @@ function closeMenus(except) {
   if (except !== effortMenu.value && effortMenu.value) effortMenu.value.open = false
 }
 
+defineExpose({ close: closeMenus })
+
 useCloseOnOutsidePointerDown(controls, () => closeMenus())
 
 function toggled(event) {

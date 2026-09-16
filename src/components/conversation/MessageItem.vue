@@ -29,6 +29,7 @@ const diagnosticStatus = ref('idle')
 let fileRequestId = 0
 let messageCopyTimer
 const contextEventTranslations = {
+  'claude-desk:media-recovered': 'message.mediaRecovered',
   'Context compacted manually · Full transcript remains available': 'message.compactedManually',
   'Context compacted automatically · Pending message sent afterward': 'message.compactedAutomatically',
   'Automatic context compaction failed · Pending message paused': 'message.compactionFailed',
@@ -177,7 +178,7 @@ onBeforeUnmount(() => {
 <template>
   <article v-if="diagnostic" class="diagnostic-event" role="status">
     <AlertTriangle :size="17" />
-    <div><strong>{{ t(diagnostic.kind === 'empty-response' ? 'diagnostic.emptyTitle' : 'diagnostic.errorTitle') }}</strong><span>{{ t(diagnostic.kind === 'empty-response' ? 'diagnostic.emptyBody' : 'diagnostic.errorBody') }}</span></div>
+    <div><strong>{{ t(diagnostic.kind === 'unsupported-media' ? 'diagnostic.mediaTitle' : diagnostic.kind === 'empty-response' ? 'diagnostic.emptyTitle' : 'diagnostic.errorTitle') }}</strong><span>{{ t(diagnostic.kind === 'unsupported-media' ? 'diagnostic.mediaBody' : diagnostic.kind === 'empty-response' ? 'diagnostic.emptyBody' : 'diagnostic.errorBody') }}</span></div>
     <button :disabled="diagnosticStatus === 'saving'" @click="exportDiagnostic"><Download :size="14" />{{ t(diagnosticStatus === 'saving' ? 'diagnostic.exporting' : diagnosticStatus === 'saved' ? 'diagnostic.exported' : 'diagnostic.export') }}</button>
   </article>
   <article v-else-if="message.role === 'system'" class="context-event"><Minimize2 :size="14" /><span>{{ systemContent }}</span></article>

@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { requestsPersistentService, withRuntimeGuidance } from './runtime'
 
 describe('persistent service runtime guidance', () => {
+  it('provides verified MCP scope and prevents inferring attachments from words alone', () => {
+    const prompt = withRuntimeGuidance('配置全局 figma MCP，显示如图')
+    expect(prompt).toContain('--scope user')
+    expect(prompt).toContain('~/.claude.json')
+    expect(prompt).toContain('Verify with claude mcp get')
+    expect(prompt).toContain('never search for or reopen old screenshots')
+    expect(withRuntimeGuidance('普通问答')).not.toContain('--scope user')
+  })
+
   it('keeps ordinary requests free of service-start guidance', () => {
     const prompt = withRuntimeGuidance('解释这段组件代码')
     expect(prompt).toContain('解释这段组件代码')

@@ -2,7 +2,7 @@ const DIAGNOSTIC_PREFIX = 'claude-desk:diagnostic:'
 const DIAGNOSTIC_PATTERN = /^claude-desk:diagnostic:(empty-response|run-error|unsupported-media):([a-zA-Z0-9-]+)$/
 
 export function isUnsupportedMediaError(message = '') {
-  return /only supports? text input|does(?: not|n't) support images?|image input is not supported|does not support multimodal/i.test(String(message))
+  return /only supports? text input|do(?:es)?(?: not|n't) support (?:images?|multimodal)|image input is not supported/i.test(String(message))
 }
 
 export function diagnosticMessage(kind, runId) {

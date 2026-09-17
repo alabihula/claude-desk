@@ -62,6 +62,8 @@ pub struct ClaudeRequest {
     pub project_path: String,
     pub prompt: String,
     pub resume: bool,
+    #[serde(default)]
+    pub recover_media: bool,
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, String>>,
@@ -457,6 +459,10 @@ pub async fn send_claude(
             );
             recovered_session = true;
         }
+    }
+    // Automatic continuation must never resend an unverified poisoned history.
+    if request.recover_media && !recovered_session {
+        return Err("Could not safely skip image/document content in this session. The original conversation and attachments were preserved.".into());
     }
     let runtime_args = runtime::with_runtime_overrides(
         request.args.clone().unwrap_or_default(),

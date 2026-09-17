@@ -15,6 +15,7 @@ import { applyRunTimelineEvent } from '../services/claude/timeline'
 import { applyResponseTextEvent } from '../services/claude/responseText'
 import { applyRunTaskEvent } from '../services/claude/tasks'
 import { diagnosticMessage, isUnsupportedMediaError } from '../services/claude/diagnostics'
+import { canRecoverMedia, mediaFallbackRequest } from '../services/claude/mediaFallback'
 import { contextForModel, contextModelKey, contextStatus, shouldAutoCompact } from '../services/claude/context'
 import { applyDisplaySettings, normalizeConversationDensity } from '../services/displaySettings'
 
@@ -481,37 +482,54 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       const contextModel = contextModelKey(queued.model || configuredModel(this.claudeSettings, this.settings))
-      this.runs[queued.conversationId] = newRun(
+      await this.startChatRun({
+        conversationId: queued.conversationId,
+        sessionId: queued.sessionId,
+        projectPath: queued.projectPath,
+        prompt: withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
+        resume: hasPreviousUserMessage,
+        command: this.settings.command,
+        args: [...(this.settings.args || [])],
+        env: { ...this.settings.env },
+        permissionMode: this.settings.permissionMode,
+        operation: 'chat',
+        contextModel,
+        skillPath: queued.skill?.path || null,
+        model: queued.model,
+        effort: queued.effort,
+      })
+    },
+
+    async startChatRun(request, previousRun = null) {
+      const { conversationId, contextModel } = request
+      this.runs[conversationId] = newRun(
         'chat',
-        this.contextStats[queued.conversationId],
+        this.contextStats[conversationId],
         'manual',
         contextModel,
       )
-      delete this.mcpRuntimeByConversation[queued.conversationId]
+      const run = this.runs[conversationId]
+      run.request = request
+      run.previousRunId = previousRun?.runId
+      run.launchPending = true
+      delete this.mcpRuntimeByConversation[conversationId]
       try {
-        const runId = await desktop.sendClaude({
-          conversationId: queued.conversationId,
-          sessionId: queued.sessionId,
-          projectPath: queued.projectPath,
-          prompt: withRuntimeGuidance(fileSelectionsPrompt(attachmentPrompt(externalSkillPrompt(content, queued.skill), queued.attachments), queued.snippets)),
-          resume: hasPreviousUserMessage,
-          command: this.settings.command,
-          args: this.settings.args,
-          env: this.settings.env,
-          permissionMode: this.settings.permissionMode,
-          operation: 'chat',
-          contextModel,
-          skillPath: queued.skill?.path || null,
-          model: queued.model,
-          effort: queued.effort,
-        })
-        if (this.runs[queued.conversationId]) this.runs[queued.conversationId].runId = runId
+        const runId = await desktop.sendClaude(request)
+        if (this.runs[conversationId] !== run || run.exitReceived) return
+        run.launchPending = false
+        run.runId = runId
+        // Stop/steer may arrive while the backend is preparing the recovered session.
+        if (run.status === 'stopping') await desktop.stopClaude(conversationId)
+        else if (run.status === 'steering') await desktop.interruptClaude(conversationId)
       } catch (error) {
-        this.runs[queued.conversationId].status = 'error'
-        this.runs[queued.conversationId].error = String(error)
+        if (this.runs[conversationId] !== run || run.exitReceived) return
+        const steering = run.status === 'steering'
+        run.status = run.status === 'stopping' ? 'stopped' : steering ? 'interrupted' : 'error'
+        run.error = String(error)
+        run.diagnosticKind = request.recoverMedia ? 'unsupported-media' : 'run-error'
+        run.runId ||= previousRun?.runId
         this.error = String(error)
-        await this.finalizeRun(queued.conversationId)
-        delete this.runs[queued.conversationId]
+        await this.finishRun(conversationId, steering)
       }
     },
 
@@ -534,6 +552,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const previousStatus = run.status
       this.queuedMessages[conversationId] = prioritizeQueuedMessage(messages, messageId)
       run.status = 'steering'
+      if (run.launchPending) return
       try {
         await desktop.interruptClaude(conversationId)
       } catch (error) {
@@ -574,6 +593,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     async stopClaude(conversationId = this.activeConversationId) {
       if (!conversationId || !this.runs[conversationId]) return
       this.runs[conversationId].status = 'stopping'
+      if (this.runs[conversationId].launchPending) return
       try { await desktop.stopClaude(conversationId) } catch (error) { this.runs[conversationId].error = String(error) }
     },
 
@@ -609,7 +629,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     handleClaudeEvent(payload) {
       const run = this.runs[payload.conversationId]
-      if (!run || (run.runId && run.runId !== payload.runId)) return
+      if (!run || run.exitReceived || run.previousRunId === payload.runId || (run.runId && run.runId !== payload.runId)) return
       if (payload.kind === 'permission') {
         const request = normalizePermissionRequest(payload.data, payload.conversationId, payload.runId)
         if (request && !this.permissionRequests.some((item) => item.requestId === request.requestId)) {
@@ -630,6 +650,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       if (payload.kind === 'started') {
+        run.runId = payload.runId
         if (run.status === 'starting') run.status = 'running'
         if (payload.data?.sessionId) {
           const conversation = this.conversationById(payload.conversationId)
@@ -683,7 +704,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (event.type === 'result') {
             run.receivedResult = true
             run.resultValueType = event.valueType
-            if (!run.content && event.text) run.content = event.text
+            if (!run.content && event.text && !event.error) run.content = event.text
             if (event.cumulativeTokens) run.context.cumulativeTokens = event.cumulativeTokens
             if (event.contextWindow) {
               run.context.window = event.contextWindow
@@ -703,6 +724,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
       }
       if (payload.kind === 'exit') {
+        run.exitReceived = true
         let shouldContinue = false
         if (run.status === 'steering') run.status = 'interrupted'
         else if (!payload.data?.success && run.status !== 'stopping' && run.status !== 'error') {
@@ -738,7 +760,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.questionRequests = this.questionRequests.filter((request) => (
         request.conversationId !== conversationId || request.runId !== runId
       ))
+      if (canRecoverMedia(finishedRun)) {
+        await this.startChatRun(mediaFallbackRequest(finishedRun.request), finishedRun)
+        return
+      }
       await this.finalizeRun(conversationId)
+      if (this.runs[conversationId] !== finishedRun) return
       delete this.runs[conversationId]
       if (shouldContinue) {
         await this.dispatchNextQueued(conversationId, { skipAutoCompact: finishedRun?.operation === 'compact' })
@@ -751,7 +778,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       run.finalized = true
       if (run.recoveredSession) {
         try {
-          const message = await desktop.saveMessage(conversationId, 'system', 'claude-desk:media-recovered')
+          const message = await desktop.saveMessage(conversationId, 'system', run.request?.recoverMedia
+            ? 'claude-desk:media-skipped' : 'claude-desk:media-recovered')
           ;(this.messages[conversationId] ||= []).push(message)
         } catch (error) { run.error = String(error) }
       }

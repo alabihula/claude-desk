@@ -29,6 +29,7 @@ const diagnosticStatus = ref('idle')
 let fileRequestId = 0
 let messageCopyTimer
 const contextEventTranslations = {
+  'claude-desk:media-skipped': 'message.mediaSkipped',
   'claude-desk:media-recovered': 'message.mediaRecovered',
   'Context compacted manually · Full transcript remains available': 'message.compactedManually',
   'Context compacted automatically · Pending message sent afterward': 'message.compactedAutomatically',

@@ -90,7 +90,7 @@ describe('workspace supplemental messages', () => {
     desktop.syncAppLanguage.mockResolvedValue(false)
   })
 
-  it('classifies tool-origin image rejection and pauses queued text until explicit continuation', async () => {
+  it('does not invent a retry without the original runtime request', async () => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()
     await store.sendMessage('只回答文字')
@@ -104,6 +104,105 @@ describe('workspace supplemental messages', () => {
     expect(store.activeQueuedMessages).toHaveLength(1)
     expect(desktop.sendClaude).not.toHaveBeenCalled()
     expect(store.activeMessages.some((m) => m.content === 'claude-desk:diagnostic:unsupported-media:run-current')).toBe(true)
+  })
+
+  function emit(store, runId, kind, data) {
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId, kind, data })
+  }
+
+  function rejectMedia(store, runId) {
+    emit(store, runId, 'stream', { type: 'assistant', isApiErrorMessage: true,
+      message: { content: [{ type: 'text', text: 'API Error: 400 Model do not support image input.' }] },
+    })
+    emit(store, runId, 'stream', { type: 'result', is_error: true, result: 'API Error: 400 Model do not support image input.' })
+  }
+
+  it('automatically answers the original text only after exit, preserving attachments and queued order', async () => {
+    const store = setupStore()
+    store.messages['conversation-1'] = [] // Even the first turn must resume after a rejected tool result.
+    desktop.sendClaude.mockResolvedValueOnce('run-image').mockResolvedValueOnce('run-text').mockResolvedValueOnce('run-queued')
+    await store.sendMessage('H5 正常，PC 接口 404，请分析', [{ id: 'image', path: '/tmp/screenshot.png', name: 'screenshot.png' }])
+    await store.sendMessage('之后再检查 nginx')
+    rejectMedia(store, 'run-image')
+    expect(store.activeRun.content).toBe('')
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(1)
+    emit(store, 'run-image', 'exit', { success: false })
+    await vi.waitFor(() => expect(store.activeRun.runId).toBe('run-text'))
+    expect(desktop.sendClaude.mock.calls[1][0]).toMatchObject({ resume: true, recoverMedia: true, sessionId: 'session-1' })
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(store.activeMessages.filter(m => m.role === 'user')).toHaveLength(1)
+    expect(desktop.linkAttachments).toHaveBeenCalledTimes(1)
+    expect(Object.values(store.attachmentsByMessage).flat()).toHaveLength(1)
+    emit(store, 'run-image', 'exit', { success: false }) // Late duplicate cannot finish the replacement run.
+    emit(store, 'run-image', 'error', { message: 'stale error' })
+    expect(store.activeRun.error).toBe('')
+    emit(store, 'run-text', 'started', { recoveredSession: true, sessionId: 'recovered' })
+    emit(store, 'run-text', 'stream', { type: 'result', result: '无法读图；根据文字，检查 PC 接口转发路径。' })
+    emit(store, 'run-text', 'exit', { success: true })
+    await vi.waitFor(() => expect(store.activeRun.runId).toBe('run-queued'))
+    expect(store.activeMessages.some(m => m.content === 'claude-desk:media-skipped')).toBe(true)
+    expect(store.activeMessages.some(m => m.content.includes('根据文字'))).toBe(true)
+    expect(store.activeMessages.some(m => m.content.includes('diagnostic:') || m.content.includes('API Error'))).toBe(false)
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(3)
+  })
+
+  it('bounds recovery to one attempt and pauses the queue if the model reads media again', async () => {
+    const store = setupStore()
+    desktop.sendClaude.mockResolvedValueOnce('run-image').mockResolvedValueOnce('run-text')
+    await store.sendMessage('请分析文字及截图')
+    await store.sendMessage('排队问题')
+    rejectMedia(store, 'run-image')
+    emit(store, 'run-image', 'exit', { success: false })
+    await vi.waitFor(() => expect(store.activeRun.runId).toBe('run-text'))
+    rejectMedia(store, 'run-text')
+    emit(store, 'run-text', 'exit', { success: false })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(2)
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(store.activeMessages.at(-1).content).toBe('claude-desk:diagnostic:unsupported-media:run-text')
+  })
+
+  it.each(['stop', 'steer'])('respects %s after media rejection without automatic recovery', async (action) => {
+    const store = setupStore()
+    await store.sendMessage('当前问题')
+    await store.sendMessage('新问题')
+    rejectMedia(store, 'run-next')
+    if (action === 'stop') await store.stopClaude()
+    else await store.steerQueuedMessage('conversation-1', store.activeQueuedMessages[0].id)
+    emit(store, 'run-next', 'exit', { success: false })
+    await vi.waitFor(() => expect(desktop.sendClaude).toHaveBeenCalledTimes(action === 'stop' ? 1 : 2))
+    if (action === 'stop') await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(desktop.sendClaude.mock.calls.every(([request]) => !request.recoverMedia)).toBe(true)
+  })
+
+  it('honors stop while preparing recovery and ignores old events before its run id arrives', async () => {
+    const store = setupStore()
+    let launch
+    desktop.sendClaude.mockResolvedValueOnce('run-image').mockImplementationOnce(() => new Promise(resolve => { launch = resolve }))
+    await store.sendMessage('图文问题')
+    rejectMedia(store, 'run-image')
+    emit(store, 'run-image', 'exit', { success: false })
+    emit(store, 'run-image', 'stream', { type: 'result', result: 'stale text' })
+    expect(store.activeRun.content).toBe('')
+    await store.stopClaude()
+    expect(desktop.stopClaude).not.toHaveBeenCalled()
+    launch('run-text')
+    await vi.waitFor(() => expect(desktop.stopClaude).toHaveBeenCalledTimes(1))
+    emit(store, 'run-text', 'exit', { success: false })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports an unavailable recovery without resending a poisoned session or losing attachments', async () => {
+    const store = setupStore()
+    desktop.sendClaude.mockResolvedValueOnce('run-image').mockRejectedValueOnce(new Error('Cannot recover an incomplete Claude transcript'))
+    await store.sendMessage('图文问题')
+    rejectMedia(store, 'run-image')
+    emit(store, 'run-image', 'exit', { success: false })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(desktop.sendClaude).toHaveBeenCalledTimes(2)
+    expect(store.activeMessages.at(-1).content).toBe('claude-desk:diagnostic:unsupported-media:run-image')
+    expect(store.activeMessages.some(m => m.content === 'claude-desk:media-skipped')).toBe(false)
   })
 
   it('uses the recovered persisted session for subsequent conversation messages', async () => {

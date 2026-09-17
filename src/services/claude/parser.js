@@ -118,7 +118,8 @@ export function parseClaudeEvent(payload) {
       }
       if (block.type === 'tool_use') appendToolEvent(events, block)
     }
-    if (text) events.push({ type: 'full-text', text, ...(payload.message?.id ? { messageId: payload.message.id } : {}) })
+    // Provider errors are diagnostics, not assistant answers.
+    if (text && !payload.isApiErrorMessage && !payload.error) events.push({ type: 'full-text', text, ...(payload.message?.id ? { messageId: payload.message.id } : {}) })
     const tokens = contextTokens(payload.message?.usage)
     if (tokens) events.push({ type: 'usage', tokens, estimated: false })
   }

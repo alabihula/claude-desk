@@ -10,8 +10,13 @@ fn unsupported_media(text: &str) -> bool {
         || text.contains("only supports text input")
         || text.contains("does not support image")
         || text.contains("doesn't support image")
+        || text.contains("do not support image")
+        || text.contains("don't support image")
         || text.contains("image input is not supported")
         || text.contains("does not support multimodal")
+        || text.contains("doesn't support multimodal")
+        || text.contains("do not support multimodal")
+        || text.contains("don't support multimodal")
 }
 
 fn media_error(record: &Value) -> bool {
@@ -143,6 +148,19 @@ mod tests {
             json!({"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"old","message":{"content":[{"type":"tool_result","tool_use_id":"tool1","content":[{"type":"image","source":{"data":"PRIVATE_BASE64"}},{"type":"text","text":"Keep tool text"}]}]}}),
             json!({"type":"assistant","sessionId":"old","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"API Error: 400 Model only support text input"}]}}),
         ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn recovers_provider_grammar_variants_from_confirmed_errors() {
+        for error in [
+            "Model do not support image input",
+            "Model doesn't support images",
+            "Models don't support multimodal input",
+        ] {
+            let source = transcript().replace("Model only support text input", error);
+            let output = recovered_transcript(&source, "new").unwrap().unwrap();
+            assert!(!output.contains("PRIVATE_BASE64"));
+        }
     }
 
     #[test]

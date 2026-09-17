@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { mergeActivity, parseClaudeEvent } from './parser'
 
 describe('parseClaudeEvent', () => {
+  it('keeps API failures out of assistant answer text', () => {
+    expect(parseClaudeEvent({ type: 'assistant', isApiErrorMessage: true,
+      message: { content: [{ type: 'text', text: 'Model do not support image input' }] },
+    })).toEqual([{ type: 'api-error', message: 'Model do not support image input' }])
+  })
   it('parses incremental assistant text without exposing raw JSON', () => {
     const events = parseClaudeEvent({
       type: 'stream_event',

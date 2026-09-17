@@ -10,6 +10,9 @@ describe('Claude diagnostics messages', () => {
   it('recognizes provider media failures without treating unrelated errors as media rejection', () => {
     expect(isUnsupportedMediaError('API Error: 400 Model only support text input')).toBe(true)
     expect(isUnsupportedMediaError('This model does not support image input')).toBe(true)
+    expect(isUnsupportedMediaError('API Error: 400 Model do not support image input. Request id: test')).toBe(true)
+    expect(isUnsupportedMediaError("Model doesn't support images")).toBe(true)
+    expect(isUnsupportedMediaError("Models don't support multimodal input")).toBe(true)
     expect(isUnsupportedMediaError('API Error: 429 overloaded')).toBe(false)
     expect(parseDiagnosticMessage(diagnosticMessage('unsupported-media', 'run-1'))?.kind).toBe('unsupported-media')
   })

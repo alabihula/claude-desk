@@ -9,6 +9,7 @@ import SettingsModal from './components/common/SettingsModal.vue'
 import PermissionsModal from './components/common/PermissionsModal.vue'
 import ToolPermissionModal from './components/common/ToolPermissionModal.vue'
 import ClaudeQuestionModal from './components/common/ClaudeQuestionModal.vue'
+import ClaudeUnavailableModal from './components/common/ClaudeUnavailableModal.vue'
 import ImageLightbox from './components/common/ImageLightbox.vue'
 import Home from './views/Home.vue'
 import Workspace from './views/Workspace.vue'
@@ -23,6 +24,7 @@ const dragging = ref(false)
 let unlistenDrag
 
 function shortcuts(event) {
+  if (store.claudeUnavailableOpen) return
   const primary = isPrimaryShortcut(event)
   if (primary && event.key.toLowerCase() === 'n') { event.preventDefault(); store.newConversation() }
   if (primary && event.key.toLowerCase() === 'k') { event.preventDefault(); window.dispatchEvent(new Event('claude-desk-focus')) }
@@ -75,5 +77,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', shortcuts); unlist
     <ToolPermissionModal />
     <ClaudeQuestionModal />
     <ImageLightbox />
+    <ClaudeUnavailableModal />
   </div>
 </template>

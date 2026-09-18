@@ -14,7 +14,7 @@ import { configuredModel, removeMigratedLegacySettings } from '../services/claud
 import { applyRunTimelineEvent } from '../services/claude/timeline'
 import { applyResponseTextEvent } from '../services/claude/responseText'
 import { applyRunTaskEvent } from '../services/claude/tasks'
-import { diagnosticMessage, isUnsupportedMediaError } from '../services/claude/diagnostics'
+import { diagnosticMessage, isClaudeStartupError, isUnsupportedMediaError } from '../services/claude/diagnostics'
 import { canRecoverMedia, mediaFallbackRequest } from '../services/claude/mediaFallback'
 import { contextForModel, contextModelKey, contextStatus, shouldAutoCompact } from '../services/claude/context'
 import { applyDisplaySettings, normalizeConversationDensity } from '../services/displaySettings'
@@ -123,6 +123,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     contextStats: {},
     mcpRuntimeByConversation: {},
     health: null,
+    claudeUnavailableOpen: false,
     runs: {},
     queuedMessages: {},
     drafts: {},
@@ -200,7 +201,23 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async refreshHealth() {
-      this.health = await desktop.checkClaude(this.settings.command, this.settings.env)
+      try {
+        this.health = await desktop.checkClaude(this.settings.command, this.settings.env)
+      } catch (error) {
+        // A missing interpreter can reject the probe; keep the rest of app initialization running.
+        this.health = { available: false, error: String(error) }
+      }
+      this.claudeUnavailableOpen = !this.health.available
+    },
+
+    reportClaudeStartError(error) {
+      if (isClaudeStartupError(error)) {
+        this.health = { available: false, error: String(error) }
+        this.claudeUnavailableOpen = true
+        this.error = ''
+      } else {
+        this.error = String(error)
+      }
     },
 
     async reloadClaudeSettings() {
@@ -528,7 +545,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         run.error = String(error)
         run.diagnosticKind = request.recoverMedia ? 'unsupported-media' : 'run-error'
         run.runId ||= previousRun?.runId
-        this.error = String(error)
+        this.reportClaudeStartError(error)
         await this.finishRun(conversationId, steering)
       }
     },
@@ -650,6 +667,10 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       if (payload.kind === 'started') {
+        if (this.health?.available === false) {
+          this.health = null
+          this.claudeUnavailableOpen = false
+        }
         run.runId = payload.runId
         if (run.status === 'starting') run.status = 'running'
         if (payload.data?.sessionId) {
@@ -998,7 +1019,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       } catch (error) {
         this.runs[conversation.id].status = 'error'
         this.runs[conversation.id].error = String(error)
-        this.error = String(error)
+        this.reportClaudeStartError(error)
         await this.finalizeRun(conversation.id)
         delete this.runs[conversation.id]
         return 'failed'

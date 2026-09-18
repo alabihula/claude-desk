@@ -69,8 +69,8 @@ onBeforeUnmount(() => unlistenResize?.())
           </div>
         </MessageList>
         <div v-if="store.health && !store.health.available" class="claude-missing">
-          <div><strong>{{ t('workspace.notFound') }}</strong><span>{{ t('workspace.notFoundBody', { command: store.settings.command }) }}</span></div>
-          <button @click="store.settingsOpen = true">{{ t('workspace.openSettings') }}</button>
+          <div><strong>{{ t('claudeUnavailable.title') }}</strong><span>{{ t('claudeUnavailable.description') }}</span></div>
+          <button @click="store.claudeUnavailableOpen = true">{{ t('claudeUnavailable.help') }}</button>
         </div>
         <ChatComposer />
       </template>

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { diagnosticMessage, parseDiagnosticMessage, isUnsupportedMediaError } from './diagnostics'
+import { diagnosticMessage, parseDiagnosticMessage, isClaudeStartupError, isUnsupportedMediaError } from './diagnostics'
 
 describe('Claude diagnostics messages', () => {
+  it('recognizes only backend startup errors, not provider errors or quoted text', () => {
+    expect(isClaudeStartupError('Claude Code not found: `claude`. Detected PATH: private')).toBe(true)
+    expect(isClaudeStartupError(new Error("Claude couldn't start: No such file or directory"))).toBe(true)
+    expect(isClaudeStartupError('Claude Code command resolves to Claude Desk itself.')).toBe(true)
+    expect(isClaudeStartupError('API Error: 400 Model do not support image input')).toBe(false)
+    expect(isClaudeStartupError('API Error: 401 Unauthorized')).toBe(false)
+    expect(isClaudeStartupError('Explanation: Claude Code not found: example')).toBe(false)
+  })
+
   it('round-trips supported diagnostic markers', () => {
     const content = diagnosticMessage('empty-response', 'run-123')
     expect(parseDiagnosticMessage(content)).toEqual({ kind: 'empty-response', runId: 'run-123' })

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 vi.mock('../services/desktop', () => ({
   desktop: {
+    checkClaude: vi.fn(),
     saveMessage: vi.fn(),
     linkAttachments: vi.fn(),
     sendClaude: vi.fn(),
@@ -104,6 +105,60 @@ describe('workspace supplemental messages', () => {
     expect(store.activeQueuedMessages).toHaveLength(1)
     expect(desktop.sendClaude).not.toHaveBeenCalled()
     expect(store.activeMessages.some((m) => m.content === 'claude-desk:diagnostic:unsupported-media:run-current')).toBe(true)
+  })
+
+  it('shows guidance for failed health probes without rejecting app initialization', async () => {
+    const store = setupStore()
+    desktop.checkClaude.mockRejectedValueOnce(new Error('missing interpreter'))
+    await store.refreshHealth()
+    expect(store.health.available).toBe(false)
+    expect(store.claudeUnavailableOpen).toBe(true)
+    expect(store.error).toBe('')
+    desktop.checkClaude.mockResolvedValueOnce({ available: true, version: '2.0 (Claude Code)' })
+    await store.refreshHealth()
+    expect(store.claudeUnavailableOpen).toBe(false)
+    expect(desktop.sendClaude).not.toHaveBeenCalled()
+  })
+
+  it('replaces missing executable PATH errors with guidance and keeps the submitted message', async () => {
+    const store = setupStore()
+    desktop.sendClaude.mockRejectedValueOnce('Claude Code not found: `claude`. Detected PATH: private-fixture')
+    await store.sendMessage('检查当前工程')
+    expect(store.claudeUnavailableOpen).toBe(true)
+    expect(store.health.available).toBe(false)
+    expect(store.error).toBe('')
+    expect(store.activeRun).toBeNull()
+    expect(store.activeMessages.filter(m => m.content === '检查当前工程')).toHaveLength(1)
+    expect(store.activeMessages.some(m => m.content.includes('private-fixture'))).toBe(false)
+
+    store.claudeUnavailableOpen = false
+    await store.sendMessage('继续')
+    emit(store, 'old-run', 'started', {})
+    expect(store.health.available).toBe(false)
+    emit(store, 'run-next', 'started', {})
+    expect(store.health).toBeNull()
+    expect(store.claudeUnavailableOpen).toBe(false)
+  })
+
+  it('keeps API failures separate from executable guidance', async () => {
+    const store = setupStore()
+    desktop.sendClaude.mockRejectedValueOnce('API Error: 400 Model do not support image input')
+    await store.sendMessage('请分析图片')
+    expect(store.claudeUnavailableOpen).toBe(false)
+    expect(store.health).toBeNull()
+    expect(store.error).toContain('API Error: 400')
+  })
+
+  it('shows the same guidance for a failed compaction launch without dispatching the queue', async () => {
+    const store = setupStore()
+    store.queuedMessages['conversation-1'] = [{ id: 'queued', content: '之后的问题' }]
+    desktop.sendClaude.mockRejectedValueOnce("Claude couldn't start: No such file or directory")
+    expect(await store.startCompaction('conversation-1')).toBe('failed')
+    expect(store.claudeUnavailableOpen).toBe(true)
+    expect(store.error).toBe('')
+    expect(store.activeRun).toBeNull()
+    expect(store.activeQueuedMessages).toHaveLength(1)
+    expect(desktop.sendClaude).toHaveBeenCalledOnce()
   })
 
   function emit(store, runId, kind, data) {

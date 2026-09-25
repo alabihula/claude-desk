@@ -30,6 +30,27 @@ afterEach(() => {
 })
 
 describe('MessageList stream following', () => {
+  it('places progress after the response and clears it when switching to a run without tasks', async () => {
+    const state = reactive({ conversationId: 'a', run: {
+      runId: 'run-a', status: 'running', content: '先检查，再验证。',
+      tasks: [{ id: '1', subject: '检查代码', status: 'in_progress' }],
+      timeline: [{ id: 't', type: 'thinking', text: '分析', status: 'running' }],
+    } })
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    app = createApp({ render: () => h(MessageList, state) }).use(createPinia())
+    app.mount(root)
+    await nextTick()
+    expect(root.querySelector('.streaming-message').nextElementSibling.classList.contains('activity-block')).toBe(true)
+    expect(root.querySelector('.task-progress').closest('details')).toBeNull()
+    root.querySelector('.execution-details').open = true
+    state.conversationId = 'b'
+    state.run = { runId: 'run-b', status: 'running', timeline: [{ id: 'b', type: 'thinking', text: '新任务' }] }
+    await nextTick()
+    expect(root.querySelector('.task-progress')).toBeNull()
+    expect(root.querySelector('.execution-details').open).toBe(false)
+  })
+
   it('does not force the viewport down after the user scrolls upward', async () => {
     const state = reactive({
       run: { operation: 'chat', content: '', timeline: [], activities: [], status: 'running', error: '' },
@@ -66,6 +87,7 @@ describe('MessageList stream following', () => {
     scrollTop = 450
     viewport.dispatchEvent(new Event('scroll'))
     state.run.content = 'first streaming chunk'
+    state.run.tasks = [{ id: '1', subject: 'Task-only update', status: 'pending' }]
     await nextTick()
     await nextTick()
     expect(scrollTo).not.toHaveBeenCalled()
@@ -92,6 +114,10 @@ describe('MessageList stream following', () => {
     await nextTick()
     await nextTick()
     expect(scrollTo).toHaveBeenCalledTimes(2)
+    state.run.tasks[0].status = 'completed'
+    await nextTick()
+    await nextTick()
+    expect(scrollTo).toHaveBeenCalledTimes(3)
   })
 
   it('renders persisted snippets and linked dropped files on the submitted user message', async () => {

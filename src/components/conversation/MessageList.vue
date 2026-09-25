@@ -108,6 +108,7 @@ watch(() => [
   props.run?.content?.length,
   props.run?.timeline?.length,
   props.run?.timeline?.reduce((total, item) => total + (item.text?.length || 0), 0),
+  props.run?.tasks?.map((task) => `${task.id}:${task.status}:${task.subject}:${task.activeForm}`).join('\n'),
 ], followLatestOutput)
 watch(turns, () => nextTick(updateActiveTurn), { flush: 'post' })
 onMounted(() => {
@@ -135,11 +136,11 @@ onBeforeUnmount(() => {
         >
           <MessageItem :message="message" :attachments="attachmentsByMessage[message.id] || []" />
         </div>
-      <ActivityList v-if="run" :key="run.runId || conversationId" :run="run" />
       <article v-if="run?.content" class="message message-assistant streaming-message">
         <div class="message-author">Claude</div>
         <div class="message-body markdown-body live-text">{{ run.content }}</div>
       </article>
+      <ActivityList v-if="run" :key="run.runId || conversationId" :run="run" />
       <slot></slot>
       </div>
     </div>

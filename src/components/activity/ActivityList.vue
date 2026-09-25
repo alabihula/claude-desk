@@ -29,15 +29,15 @@ const recoveringMedia = computed(() => canRecoverMedia(props.run)
       <span v-else-if="run.status === 'complete'">{{ t('activity.done') }}</span>
       <span v-else>{{ t('activity.working') }}</span>
     </div>
+    <TaskProgress v-if="run.tasks?.length" :tasks="run.tasks" :run-status="run.status" />
     <div v-if="presentation.current.length" class="activity-current">
       <ActivityRow v-for="entry in presentation.current" :key="entry.id" :activity="entry.activity" :stopping="run.status === 'stopping'" />
     </div>
     <div v-if="presentation.errors.length" class="activity-errors" role="status">
       <ActivityRow v-for="entry in presentation.errors" :key="entry.id" :activity="entry.activity" />
     </div>
-    <details v-if="presentation.entries.length || run.tasks?.length" class="execution-details">
+    <details v-if="presentation.entries.length" class="execution-details">
       <summary><ChevronDown :size="14" /><span>{{ t('activity.executionDetails') }}</span><small v-if="presentation.total">{{ t('activity.toolProgress', { completed: presentation.completed, total: presentation.total }) }}</small></summary>
-      <TaskProgress v-if="run.tasks?.length" :tasks="run.tasks" />
       <div class="activity-list">
       <template v-for="entry in presentation.entries" :key="entry.id">
         <ThinkingBlock v-if="entry.type === 'thinking'" :item="entry" />

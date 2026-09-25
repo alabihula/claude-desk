@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createApp, h } from 'vue'
+import { createApp, h, nextTick, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useWorkspaceStore } from '../../stores/workspace'
@@ -7,6 +7,7 @@ import TaskProgress from './TaskProgress.vue'
 
 let app
 let root
+let state
 
 beforeEach(() => {
   const pinia = createPinia()
@@ -14,12 +15,13 @@ beforeEach(() => {
   useWorkspaceStore().settings.language = 'zh-CN'
   root = document.createElement('div')
   document.body.appendChild(root)
-  app = createApp({
-    render: () => h(TaskProgress, { tasks: [
+  state = reactive({ runStatus: 'running', tasks: [
       { id: '1', subject: '读取代码', activeForm: '正在读取代码', status: 'completed' },
       { id: '2', subject: '补充单测', activeForm: '正在补充单测', status: 'in_progress' },
       { id: '3', subject: '编译验证', activeForm: '正在编译验证', status: 'pending' },
-    ] }),
+    ] })
+  app = createApp({
+    render: () => h(TaskProgress, state),
   })
   app.use(pinia)
   app.mount(root)
@@ -31,6 +33,16 @@ afterEach(() => {
 })
 
 describe('TaskProgress', () => {
+  it.each(['stopping', 'stopped', 'interrupted', 'error', 'complete'])('does not imply unfinished tasks are running after %s', async (status) => {
+    state.runStatus = status
+    await nextTick()
+    expect(root.querySelector('.task-in_progress').textContent).toContain('补充单测')
+    expect(root.querySelector('.task-in_progress').textContent).not.toContain('正在')
+    expect(root.querySelector('.task-in_progress svg')).toBeNull()
+    expect(root.querySelector('.task-in_progress .task-checkbox').getAttribute('aria-label')).toBe('未完成')
+    expect(root.querySelector('header').textContent).toContain('已完成 1/3')
+  })
+
   it('renders a localized progress title and checkbox state for every task', () => {
     expect(root.querySelector('header').textContent).toContain('任务进度')
     expect(root.querySelector('header').textContent).toContain('已完成 1/3')

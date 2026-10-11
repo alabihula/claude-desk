@@ -115,7 +115,10 @@ try {
   const closed = spawnSync('powershell.exe', ['-NoProfile', '-Command', "Get-Process claude-desk | ForEach-Object { $_.CloseMainWindow() | Out-Null }"], { windowsHide: true })
   assert.equal(closed.status, 0)
   await pause(5500)
-  pass('normal window close and session cleanup requested')
+  const alive = spawnSync('powershell.exe', ['-NoProfile', '-Command', '[bool](Get-Process claude-desk -ErrorAction SilentlyContinue)'], { windowsHide: true, encoding: 'utf8' })
+  assert.equal(alive.status, 0)
+  assert.equal(alive.stdout.trim(), 'False', 'App must exit before WebDriver session disposal')
+  pass('normal window close exits App before driver disposal')
 } finally {
   writeFileSync(join(root, 'report.json'), JSON.stringify({ checks: report }, null, 2))
   if (session) await api('DELETE', `/session/${session}`).catch(() => {})

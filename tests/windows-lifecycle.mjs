@@ -104,8 +104,10 @@ try {
   await evaluate('await window.__TAURI_INTERNALS__.invoke("open_terminal", { path: args[0] })', [project])
   await pause(1500)
   pass('explicit Open Terminal action invoked')
-  // Close via native window IPC so App lifecycle cleanup runs (not a forced kill).
-  await evaluate('setTimeout(() => window.__TAURI_INTERNALS__.invoke("plugin:window|close", { label: "main" }), 50);')
+  // CloseMainWindow sends WM_CLOSE; unlike terminating the process it exercises
+  // the production App exit callback without widening webview IPC permissions.
+  const closed = spawnSync('powershell.exe', ['-NoProfile', '-Command', "Get-Process claude-desk | ForEach-Object { $_.CloseMainWindow() | Out-Null }"], { windowsHide: true })
+  assert.equal(closed.status, 0)
   await pause(5500)
   pass('normal window close and session cleanup requested')
 } finally {

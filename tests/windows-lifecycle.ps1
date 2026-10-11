@@ -32,7 +32,7 @@ public static class ConsoleWatch {
     }, IntPtr.Zero);
   }
   public static void Start(string root) { Scan(root, true); task = Task.Run(() => { while (!stopped) { Scan(root, false); Thread.Sleep(50); } }); }
-  public static void Stop() { stopped = true; task.Wait(); }
+  public static void Stop() { stopped = true; if (task != null) task.Wait(); }
 }
 '@
 $driver = $null

@@ -24,7 +24,9 @@ Claude Code 的结构化运行时能力很强，但日常桌面使用还需要�
 - **附件与本地产物：** 支持粘贴图片、添加文件、预览图片/文本/HTML，并安全定位项目内产物。
 - **队列、停止与调整：** 运行期间可加入补充消息、停止当前任务或立即调整方向。
 - **文件与 Git：** 浏览项目文件、查看本地变更与 Diff，并从 App 打开或定位文件。
-- **Skills 与 MCP：** 发现本机可用 Skills，查看 MCP server 状态。
+- **Skills 与 MCP：** 发现本机可用 Skills，查看 MCP server 状态。同一会话跨轮复用 Claude/MCP 进程，停止优先中断当前回答，保留浏览器等工具状态。
+
+会话进程在 App 退出、删除会话、运行配置变化或异常超时后释放；最多保留最近 3 个空闲会话，较早的会话会在下次发送时重新启动。MCP 自己的关闭工具仍然会生效。多个会话同时使用 Playwright 时，应在 MCP 配置中使用 `--isolated` 或不同的 `--user-data-dir`，以免争用同一个浏览器配置目录。
 - **桌面体验：** 中英文界面、明暗主题、紧凑显示，以及 macOS/Windows 原生进程行为。
 
 更完整的产品边界与实现背景见 [`CLAUDE_DESK_SPEC.md`](CLAUDE_DESK_SPEC.md) 和 [`CLAUDE_DESK_ROADMAP.md`](CLAUDE_DESK_ROADMAP.md)。

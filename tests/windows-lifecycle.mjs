@@ -35,9 +35,11 @@ async function until(script, message, limit = 60000) {
   do { if (await evaluate(script)) return; await pause(100) } while (Date.now() < end)
   throw new Error(message)
 }
+const phase = (name) => writeFileSync(join(root, 'phase.txt'), `background: ${name}`)
 const report = []
 const pass = (message) => { report.push(message); console.log(`PASS ${message}`) }
 async function send(prompt) {
+  phase(`send ${prompt}`)
   await evaluate('await store.sendMessage(args[0]);', [prompt])
   await until('return !store.activeRun', `turn did not finish: ${prompt}`)
   const text = await evaluate('return store.activeMessages.filter(m => m.role === "assistant").at(-1)?.content')
@@ -48,15 +50,18 @@ try {
   for (let n = 0; n < 100; n++) {
     try { await api('GET', '/status'); break } catch { await pause(200) }
   }
+  phase('start App through WebDriver')
   const created = await api('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: app } } } })
   session = created.sessionId
   await api('POST', `/session/${session}/timeouts`, { script: 90000 })
   await until('return store && !store.loading', 'App initialization failed')
   await evaluate(`store.settings = { ...store.settings, command: args[0], args: ['--playwright'], env: {}, language: 'en' }; await store.refreshHealth(); window.testEvents = []; const original = store.handleClaudeEvent; store.handleClaudeEvent = event => { if (event.kind === 'started') window.testEvents.push(event); return original(event) };`, [wrapper])
   assert.equal(await evaluate('return store.health.available'), true)
+  phase('second App launch')
   const duplicate = spawn(app, [], { windowsHide: true, stdio: 'ignore' })
   await Promise.race([new Promise(r => duplicate.once('exit', r)), pause(10000).then(() => { throw new Error('Duplicate App did not exit') })])
   pass('installed App initialization and second-launch single instance')
+  phase('add and select projects')
   await evaluate('await store.addProject(args[0]); window.firstProject = store.activeProjectId; window.firstConversation = store.activeConversationId;', [project])
   await pause(9500) // More than three Git refresh intervals.
   await evaluate('await store.addProject(args[0]); await store.selectProject(window.firstProject, window.firstConversation)', [otherProject])
@@ -78,6 +83,7 @@ try {
   await evaluate('await store.selectConversation(window.firstConversation)')
   assert((await send('check')).includes('same-live-page'))
   pass('conversation switching preserves isolated browsers')
+  phase('open and reveal file')
   await evaluate('await store.openFile(args[0], null, true)', [join(project, 'example.txt')])
   await evaluate('await window.__TAURI_INTERNALS__.invoke("reveal_project_file", { projectPath: args[0], sourcePath: "example.txt" })', [project])
   pass('open and reveal project file')

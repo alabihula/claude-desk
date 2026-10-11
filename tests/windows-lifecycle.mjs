@@ -50,8 +50,19 @@ try {
   for (let n = 0; n < 100; n++) {
     try { await api('GET', '/status'); break } catch { await pause(200) }
   }
+  const nativeCapabilities = { browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { binary: app } }
+  // EdgeDriver adds enable-logging by default; WebView2 131 allocates a console
+  // for it. Reproduce that driver-only boundary, then test without the injected
+  // logging flag. No production process or window is hidden by this test.
+  writeFileSync(join(root, 'phase.txt'), 'probe-driver-logging')
+  const probe = await api('POST', '/session', { capabilities: { alwaysMatch: nativeCapabilities } })
+  await pause(1500)
+  await api('DELETE', `/session/${probe.sessionId}`)
+  await pause(1500)
   phase('start App through WebDriver')
-  const created = await api('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: app } } } })
+  const created = await api('POST', '/session', { capabilities: { alwaysMatch: {
+    ...nativeCapabilities, 'ms:edgeOptions': { binary: app, excludeSwitches: ['enable-logging'] },
+  } } })
   session = created.sessionId
   await api('POST', `/session/${session}/timeouts`, { script: 90000 })
   await until('return store && !store.loading', 'App initialization failed')

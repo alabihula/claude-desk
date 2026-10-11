@@ -56,11 +56,16 @@ public static class ConsoleWatch {
 '@
 $driver = $null
 try {
-  $driver = Start-Process tauri-driver -ArgumentList @('--native-driver', $env:CLAUDE_DESK_EDGE_DRIVER) -WindowStyle Hidden -PassThru -RedirectStandardOutput "$root/driver.log" -RedirectStandardError "$root/driver-error.log"
+  $driver = Start-Process $env:CLAUDE_DESK_EDGE_DRIVER -ArgumentList @('--port=4444') -WindowStyle Hidden -PassThru -RedirectStandardOutput "$root/driver.log" -RedirectStandardError "$root/driver-error.log"
   [ConsoleWatch]::Start($root)
-  # Reproduce the shell-launched harness boundary separately from the App.
-  Set-Content "$root/phase.txt" 'probe-harness'
-  node -e "setTimeout(() => {}, 1000)"
+  Set-Content "$root/phase.txt" 'background: normal installed-App launch'
+  $normal = Start-Process $env:CLAUDE_DESK_TEST_APP -PassThru
+  Start-Sleep -Seconds 5
+  $normal.Refresh()
+  if ($normal.HasExited) { throw 'Normal installed-App launch failed' }
+  if (-not $normal.CloseMainWindow()) { throw 'Could not request normal App close' }
+  if (-not $normal.WaitForExit(10000)) { throw 'Normal App close did not finish' }
+  Write-Host 'PASS normal installed-App launch and native close before automation'
   Set-Content "$root/phase.txt" 'background: packaged-app-start'
   $start = [System.Diagnostics.ProcessStartInfo]::new((Get-Command node).Source)
   $start.ArgumentList.Add('tests/windows-lifecycle.mjs')

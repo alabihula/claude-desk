@@ -9,7 +9,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
@@ -22,7 +22,7 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct ClaudeProcesses {
     running: Mutex<HashMap<String, RunningProcess>>,
-    dispatch: AsyncMutex<()>,
+    dispatch: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
     retired: Mutex<HashSet<String>>,
 }
 
@@ -367,7 +367,8 @@ pub async fn send_claude(
     state: State<'_, ClaudeProcesses>,
     mut request: ClaudeRequest,
 ) -> Result<String, String> {
-    let _dispatch = state.dispatch.lock().await;
+    let dispatch = state.dispatch_lock(&request.conversation_id)?;
+    let _dispatch = dispatch.lock().await;
     {
         let running = state
             .running
@@ -1026,6 +1027,19 @@ pub fn stop_claude(
 }
 
 impl ClaudeProcesses {
+    fn dispatch_lock(&self, conversation_id: &str) -> Result<Arc<AsyncMutex<()>>, String> {
+        let mut gates = self
+            .dispatch
+            .lock()
+            .map_err(|_| "Claude dispatch state is unavailable")?;
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        let gate = gates
+            .get(conversation_id)
+            .and_then(Weak::upgrade)
+            .unwrap_or_default();
+        gates.insert(conversation_id.to_string(), Arc::downgrade(&gate));
+        Ok(gate)
+    }
     fn prune_idle(&self) {
         let Ok(mut running) = self.running.lock() else {
             return;
@@ -1147,6 +1161,17 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn serializes_duplicate_launches_without_blocking_other_conversations() {
+        let state = super::ClaudeProcesses::default();
+        let first = state.dispatch_lock("first").unwrap();
+        let repeated = state.dispatch_lock("first").unwrap();
+        let other = state.dispatch_lock("other").unwrap();
+        let _held = first.lock().await;
+        assert!(repeated.try_lock().is_err());
+        assert!(other.try_lock().is_ok());
+    }
 
     #[test]
     fn reuse_key_tracks_connection_settings_but_ignores_turns_and_cli_counters() {

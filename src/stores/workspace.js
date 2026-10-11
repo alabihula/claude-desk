@@ -407,8 +407,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async deleteConversation(conversation) {
-      if (this.runs[conversation.id]) await this.stopClaude(conversation.id)
       await desktop.deleteConversation(conversation.id)
+      delete this.runs[conversation.id]
+      this.permissionRequests = this.permissionRequests.filter((request) => request.conversationId !== conversation.id)
+      this.questionRequests = this.questionRequests.filter((request) => request.conversationId !== conversation.id)
       const projectId = conversation.projectId
       const remaining = (this.conversationsByProject[projectId] || []).filter((item) => item.id !== conversation.id)
       this.conversationsByProject[projectId] = remaining
@@ -744,7 +746,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           }
         }
       }
-      if (payload.kind === 'exit') {
+      if (payload.kind === 'turn_complete' || payload.kind === 'exit') {
         run.exitReceived = true
         let shouldContinue = false
         if (run.status === 'steering') run.status = 'interrupted'

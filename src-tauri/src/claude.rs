@@ -1,16 +1,18 @@
-use crate::{context, data, diagnostics, platform, runtime, session_recovery, skills};
+use crate::{
+    claude_session::{Event as SessionEvent, Session},
+    context, data, diagnostics, platform, runtime, session_recovery, skills,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::ChildStdin,
     sync::Mutex as AsyncMutex,
     time::{sleep, timeout, Duration},
@@ -20,10 +22,15 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct ClaudeProcesses {
     running: Mutex<HashMap<String, RunningProcess>>,
+    dispatch: AsyncMutex<()>,
+    retired: Mutex<HashSet<String>>,
 }
 
 struct RunningProcess {
-    pid: u32,
+    session: Arc<Session>,
+    reuse_key: Value,
+    busy: bool,
+    last_used: std::time::Instant,
     run_id: String,
     input: Arc<AsyncMutex<Option<ChildStdin>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
@@ -54,7 +61,7 @@ pub enum PermissionDecision {
     AllowUserTool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeRequest {
     pub conversation_id: String,
@@ -184,24 +191,7 @@ async fn write_input(
     input: &Arc<AsyncMutex<Option<ChildStdin>>>,
     message: &Value,
 ) -> Result<(), String> {
-    let mut guard = input.lock().await;
-    let stdin = guard
-        .as_mut()
-        .ok_or("Claude is no longer accepting input")?;
-    let mut line = serde_json::to_vec(message).map_err(|error| error.to_string())?;
-    line.push(b'\n');
-    stdin
-        .write_all(&line)
-        .await
-        .map_err(|error| error.to_string())?;
-    stdin.flush().await.map_err(|error| error.to_string())
-}
-
-async fn close_input(input: &Arc<AsyncMutex<Option<ChildStdin>>>) {
-    let mut guard = input.lock().await;
-    if let Some(mut stdin) = guard.take() {
-        let _ = stdin.shutdown().await;
-    }
+    crate::claude_session::write(input, message).await
 }
 
 fn permission_request(payload: &Value) -> Option<(String, PendingPermission, Value)> {
@@ -377,12 +367,16 @@ pub async fn send_claude(
     state: State<'_, ClaudeProcesses>,
     mut request: ClaudeRequest,
 ) -> Result<String, String> {
+    let _dispatch = state.dispatch.lock().await;
     {
         let running = state
             .running
             .lock()
             .map_err(|_| "Claude process state is unavailable")?;
-        if running.contains_key(&request.conversation_id) {
+        if running
+            .get(&request.conversation_id)
+            .is_some_and(|process| process.busy)
+        {
             return Err("Claude is already working in this conversation".into());
         }
     }
@@ -440,8 +434,30 @@ pub async fn send_claude(
     let effort = runtime::normalize_effort(request.effort.as_deref())?;
     // Resolve persisted identity, not a queued message's possibly pre-recovery snapshot.
     request.session_id = data::conversation_session(&app, &request.conversation_id)?;
+    let reuse_key = session_key(&request, &context_config_dir);
+    let (reused_session, replaced_session) = {
+        let mut running = state
+            .running
+            .lock()
+            .map_err(|_| "Claude process state is unavailable")?;
+        if let Some(process) = running.get(&request.conversation_id).filter(|process| {
+            process.reuse_key == reuse_key && process.session.is_alive() && !request.recover_media
+        }) {
+            (Some(process.session.clone()), None)
+        } else {
+            (
+                None,
+                running
+                    .remove(&request.conversation_id)
+                    .map(|process| process.session),
+            )
+        }
+    };
+    if let Some(session) = replaced_session {
+        session.close().await;
+    }
     let mut recovered_session = false;
-    if request.resume {
+    if request.resume && reused_session.is_none() {
         if let Some(session_id) =
             session_recovery::recover(&context_config_dir, &request.session_id)?
         {
@@ -527,12 +543,12 @@ pub async fn send_claude(
     // A dedicated process group lets Stop terminate Claude and any tool process it launched.
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Claude couldn't start: {error}"))?;
-    let pid = child
-        .id()
-        .ok_or("Claude process did not expose a process id")?;
+    let reused = reused_session.is_some();
+    let session = match reused_session {
+        Some(session) => session,
+        None => Session::spawn(command).await?,
+    };
+    let pid = session.pid;
     let run_id = Uuid::new_v4().to_string();
     let mut run_diagnostics = diagnostics::RunDiagnostics::new(
         &app,
@@ -547,47 +563,39 @@ pub async fn send_claude(
             operation,
         },
     );
-    let input = Arc::new(AsyncMutex::new(Some(
-        child.stdin.take().ok_or("Claude stdin is unavailable")?,
-    )));
+    let input = session.input.clone();
     let pending_permissions = Arc::new(Mutex::new(HashMap::new()));
-    let mcp_control = Arc::new(crate::mcp_control::McpControl::default());
-    // Initialize the bidirectional protocol before sending the first user turn.
-    write_input(
-        &input,
-        &serde_json::json!({
-            "type": "control_request",
-            "request_id": Uuid::new_v4().to_string(),
-            "request": { "subtype": "initialize", "hooks": {}, "sdkMcpServers": [] }
-        }),
-    )
-    .await?;
-    write_input(
-        &input,
-        &serde_json::json!({
-            "type": "user",
-            "message": { "role": "user", "content": request.prompt },
-            "parent_tool_use_id": null,
-            "uuid": Uuid::new_v4().to_string()
-        }),
-    )
-    .await?;
-    let stdout = child.stdout.take().ok_or("Claude stdout is unavailable")?;
-    let stderr = child.stderr.take().ok_or("Claude stderr is unavailable")?;
-    state
-        .running
-        .lock()
-        .map_err(|_| "Claude process state is unavailable")?
-        .insert(
-            request.conversation_id.clone(),
-            RunningProcess {
-                pid,
-                run_id: run_id.clone(),
-                input: input.clone(),
-                pending_permissions: pending_permissions.clone(),
-                mcp_control: mcp_control.clone(),
-            },
-        );
+    let mcp_control = session.control.clone();
+    let mut events = session.begin(request.prompt.clone())?;
+    {
+        // Deletion may race the async launch. Hold the tombstone guard through
+        // registration so a deleted conversation cannot leave a new idle process.
+        let retired = state
+            .retired
+            .lock()
+            .map_err(|_| "Claude process state is unavailable")?;
+        if retired.contains(&request.conversation_id) {
+            session.terminate();
+            return Err("This conversation was deleted before Claude started".into());
+        }
+        state
+            .running
+            .lock()
+            .map_err(|_| "Claude process state is unavailable")?
+            .insert(
+                request.conversation_id.clone(),
+                RunningProcess {
+                    session: session.clone(),
+                    reuse_key,
+                    busy: true,
+                    last_used: std::time::Instant::now(),
+                    run_id: run_id.clone(),
+                    input: input.clone(),
+                    pending_permissions: pending_permissions.clone(),
+                    mcp_control: mcp_control.clone(),
+                },
+            );
+    }
 
     let app_for_task = app.clone();
     let conversation_id = request.conversation_id.clone();
@@ -602,79 +610,110 @@ pub async fn send_claude(
             &conversation_id,
             &run_for_task,
             "started",
-            serde_json::json!({ "pid": pid, "sessionId": session_id, "recoveredSession": recovered_session }),
+            serde_json::json!({ "pid": pid, "sessionId": session_id, "recoveredSession": recovered_session, "reusedSession": reused }),
         );
-        let mut stdout_lines = BufReader::new(stdout).lines();
-        let mut stderr_lines = BufReader::new(stderr).lines();
-        let mut stdout_done = false;
-        let mut stderr_done = false;
         let mut context_window = 0;
         let mut cumulative_tokens = 0;
-        while !stdout_done || !stderr_done {
-            tokio::select! {
-                line = stdout_lines.next_line(), if !stdout_done => match line {
-                    Ok(Some(line)) => {
-                        let parsed = serde_json::from_str(&line);
-                        let valid_json = parsed.is_ok();
-                        let payload = parsed.unwrap_or_else(|_| serde_json::json!({ "text": line }));
-                        run_diagnostics.observe_stdout(&line, &payload, valid_json);
-                        mcp_control.receive(&payload);
-                        if let Some((request_id, permission, event)) = permission_request(&payload) {
-                            let disposition = control_request_disposition(&permission, auto_approve_tools);
-                            if disposition == ControlRequestDisposition::AutoApprove {
-                                match permission_response(&request_id, &permission, PermissionDecision::AllowOnce) {
-                                    Ok(response) => {
-                                        if let Err(error) = write_input(&input_for_task, &response).await {
-                                            emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error }));
-                                            close_input(&input_for_task).await;
-                                        }
+        let mut completion = None;
+        while let Some(event) = events.recv().await {
+            match event {
+                SessionEvent::Stdout(line) => {
+                    let parsed = serde_json::from_str(&line);
+                    let valid_json = parsed.is_ok();
+                    let payload = parsed.unwrap_or_else(|_| serde_json::json!({ "text": line }));
+                    run_diagnostics.observe_stdout(&line, &payload, valid_json);
+                    if let Some((request_id, permission, event)) = permission_request(&payload) {
+                        let disposition =
+                            control_request_disposition(&permission, auto_approve_tools);
+                        if disposition == ControlRequestDisposition::AutoApprove {
+                            match permission_response(
+                                &request_id,
+                                &permission,
+                                PermissionDecision::AllowOnce,
+                            ) {
+                                Ok(response) => {
+                                    if let Err(error) =
+                                        write_input(&input_for_task, &response).await
+                                    {
+                                        emit(
+                                            &app_for_task,
+                                            &conversation_id,
+                                            &run_for_task,
+                                            "error",
+                                            serde_json::json!({ "message": error }),
+                                        );
+                                        session.terminate();
                                     }
-                                    Err(error) => emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error })),
                                 }
-                                continue;
+                                Err(error) => emit(
+                                    &app_for_task,
+                                    &conversation_id,
+                                    &run_for_task,
+                                    "error",
+                                    serde_json::json!({ "message": error }),
+                                ),
                             }
-                            if let Ok(mut pending) = permissions_for_task.lock() {
-                                pending.insert(request_id, permission);
-                            }
-                            emit(
-                                &app_for_task,
-                                &conversation_id,
-                                &run_for_task,
-                                if disposition == ControlRequestDisposition::Question { "question" } else { "permission" },
-                                event,
-                            );
                             continue;
                         }
-                        let is_result = payload.get("type").and_then(Value::as_str) == Some("result");
-                        if is_result {
-                            context_window = context::context_window(payload.get("modelUsage"));
-                            cumulative_tokens = context::usage_tokens(payload.get("usage"));
+                        if let Ok(mut pending) = permissions_for_task.lock() {
+                            pending.insert(request_id, permission);
                         }
-                        // Successful control responses can contain a large capability payload
-                        // that the UI does not render. Only forward normal Claude events.
-                        if payload.get("type").and_then(Value::as_str) != Some("control_response") {
-                            emit(&app_for_task, &conversation_id, &run_for_task, "stream", payload);
-                        }
-                        if is_result {
-                            mcp_control.close();
-                            close_input(&input_for_task).await;
-                        }
+                        emit(
+                            &app_for_task,
+                            &conversation_id,
+                            &run_for_task,
+                            if disposition == ControlRequestDisposition::Question {
+                                "question"
+                            } else {
+                                "permission"
+                            },
+                            event,
+                        );
+                        continue;
                     }
-                    Ok(None) => stdout_done = true,
-                    Err(error) => { stdout_done = true; emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error.to_string() })); }
-                },
-                line = stderr_lines.next_line(), if !stderr_done => match line {
-                    Ok(Some(line)) => {
-                        run_diagnostics.observe_stderr(&line);
-                        emit(&app_for_task, &conversation_id, &run_for_task, "stderr", serde_json::json!({ "message": line }));
+                    let is_result = payload.get("type").and_then(Value::as_str) == Some("result");
+                    if is_result {
+                        context_window = context::context_window(payload.get("modelUsage"));
+                        cumulative_tokens = context::usage_tokens(payload.get("usage"));
                     }
-                    Ok(None) => stderr_done = true,
-                    Err(error) => { stderr_done = true; emit(&app_for_task, &conversation_id, &run_for_task, "error", serde_json::json!({ "message": error.to_string() })); }
+                    // Successful control responses can contain a large capability payload
+                    // that the UI does not render. Only forward normal Claude events.
+                    if payload.get("type").and_then(Value::as_str) != Some("control_response") {
+                        emit(
+                            &app_for_task,
+                            &conversation_id,
+                            &run_for_task,
+                            "stream",
+                            payload,
+                        );
+                    }
+                }
+                SessionEvent::Stderr(line) => {
+                    run_diagnostics.observe_stderr(&line);
+                }
+                SessionEvent::Complete => {
+                    completion = Some((true, None, None, true));
+                    break;
+                }
+                SessionEvent::Exit {
+                    success,
+                    code,
+                    error,
+                } => {
+                    completion = Some((success, code, error, false));
+                    break;
                 }
             }
         }
-        mcp_control.close();
-        let status = child.wait().await;
+        let (success, code, error, turn_complete) = completion.unwrap_or((
+            false,
+            None,
+            Some("Claude transport closed unexpectedly".into()),
+            false,
+        ));
+        if let Ok(mut pending) = permissions_for_task.lock() {
+            pending.clear();
+        }
         let previous_context = data::read_context_stats(&app_for_task, &conversation_id)
             .ok()
             .flatten();
@@ -756,40 +795,48 @@ pub async fn send_claude(
         }
         if let Some(state) = app_for_task.try_state::<ClaudeProcesses>() {
             if let Ok(mut running) = state.running.lock() {
-                running.remove(&conversation_id);
+                // A late old process must never remove a replacement session.
+                if let Some(process) = running
+                    .get_mut(&conversation_id)
+                    .filter(|process| process.run_id == run_for_task)
+                {
+                    process.busy = false;
+                    process.last_used = std::time::Instant::now();
+                    if !session.is_alive() {
+                        running.remove(&conversation_id);
+                    }
+                }
             }
         }
-        match status {
-            Ok(status) => {
-                run_diagnostics.finish(status.success(), status.code(), None);
-                let _ = diagnostics::save(&app_for_task, &run_diagnostics);
-                emit(
-                    &app_for_task,
-                    &conversation_id,
-                    &run_for_task,
-                    "exit",
-                    serde_json::json!({ "success": status.success(), "code": status.code() }),
-                );
-            }
-            Err(error) => {
-                run_diagnostics.finish(false, None, Some(&error.to_string()));
-                let _ = diagnostics::save(&app_for_task, &run_diagnostics);
-                emit(
-                    &app_for_task,
-                    &conversation_id,
-                    &run_for_task,
-                    "error",
-                    serde_json::json!({ "message": error.to_string() }),
-                );
-                emit(
-                    &app_for_task,
-                    &conversation_id,
-                    &run_for_task,
-                    "exit",
-                    serde_json::json!({ "success": false, "code": null }),
-                );
-            }
+        if turn_complete {
+            run_diagnostics.finish_turn();
+        } else {
+            run_diagnostics.finish(success, code, error.as_deref());
         }
+        let _ = diagnostics::save(&app_for_task, &run_diagnostics);
+        if let Some(error) = error {
+            emit(
+                &app_for_task,
+                &conversation_id,
+                &run_for_task,
+                "error",
+                serde_json::json!({"message":error}),
+            );
+        }
+        if let Some(state) = app_for_task.try_state::<ClaudeProcesses>() {
+            state.prune_idle();
+        }
+        emit(
+            &app_for_task,
+            &conversation_id,
+            &run_for_task,
+            if turn_complete {
+                "turn_complete"
+            } else {
+                "exit"
+            },
+            serde_json::json!({"success":success,"code":code}),
+        );
     });
     Ok(run_id)
 }
@@ -960,25 +1007,7 @@ pub async fn interrupt_claude(
     state: State<'_, ClaudeProcesses>,
     conversation_id: String,
 ) -> Result<(), String> {
-    let input = {
-        let running = state
-            .running
-            .lock()
-            .map_err(|_| "Claude process state is unavailable")?;
-        running
-            .get(&conversation_id)
-            .map(|process| process.input.clone())
-            .ok_or("Claude is no longer working in this conversation")?
-    };
-    write_input(
-        &input,
-        &serde_json::json!({
-            "type": "control_request",
-            "request_id": Uuid::new_v4().to_string(),
-            "request": { "subtype": "interrupt" }
-        }),
-    )
-    .await
+    stop_claude(state, conversation_id)
 }
 
 #[tauri::command]
@@ -990,10 +1019,124 @@ pub fn stop_claude(
         .running
         .lock()
         .map_err(|_| "Claude process state is unavailable")?;
-    let Some(process) = running.get(&conversation_id) else {
-        return Ok(());
-    };
-    platform::stop_process_tree(process.pid, &process.run_id)
+    if let Some(process) = running.get(&conversation_id).filter(|process| process.busy) {
+        process.session.interrupt()?;
+    }
+    Ok(())
+}
+
+impl ClaudeProcesses {
+    fn prune_idle(&self) {
+        let Ok(mut running) = self.running.lock() else {
+            return;
+        };
+        let mut idle: Vec<_> = running
+            .iter()
+            .filter(|(_, process)| !process.busy)
+            .map(|(id, process)| (id.clone(), process.last_used))
+            .collect();
+        idle.sort_by_key(|(_, time)| *time);
+        // Bound memory/browser retention across many conversations; active work is never evicted.
+        let count = idle.len().saturating_sub(3);
+        for (id, _) in idle.into_iter().take(count) {
+            if let Some(process) = running.remove(&id) {
+                process.session.request_close();
+            }
+        }
+    }
+    pub fn release(&self, conversation_id: &str) {
+        let Ok(mut retired) = self.retired.lock() else {
+            return;
+        };
+        retired.insert(conversation_id.to_string());
+        if let Ok(mut running) = self.running.lock() {
+            if let Some(process) = running.remove(conversation_id) {
+                process.session.terminate();
+            }
+        }
+    }
+    pub fn shutdown(&self) {
+        let sessions = self
+            .running
+            .lock()
+            .map(|mut running| {
+                running
+                    .drain()
+                    .map(|(_, process)| process.session)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        // EOF lets MCP servers close their browsers cleanly. Give all sessions
+        // the same bounded grace period, then terminate only remaining trees.
+        for session in &sessions {
+            session.request_close();
+        }
+        tauri::async_runtime::block_on(async {
+            let _ = timeout(Duration::from_secs(4), async {
+                while sessions.iter().any(|session| session.is_alive()) {
+                    sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await;
+        });
+        for session in sessions {
+            session.terminate();
+        }
+    }
+}
+
+fn session_key(request: &ClaudeRequest, config_dir: &Path) -> Value {
+    use std::hash::{Hash, Hasher};
+    let mut key = serde_json::to_value(request).unwrap_or_default();
+    if let Some(fields) = key.as_object_mut() {
+        for name in [
+            "prompt",
+            "resume",
+            "recoverMedia",
+            "contextModel",
+            "operation",
+        ] {
+            fields.remove(name);
+        }
+    }
+    // Claude reads settings/MCP definitions on startup. Restart at the next turn
+    // when their content changes, without persisting secrets in diagnostics.
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    let project = Path::new(&request.project_path);
+    for path in [
+        config_dir.join("settings.json"),
+        project.join(".mcp.json"),
+        project.join(".claude/settings.json"),
+        project.join(".claude/settings.local.json"),
+    ] {
+        fs::read(path).ok().hash(&mut hash);
+    }
+    // ~/.claude.json also contains counters/timestamps updated by every turn.
+    // Only connection definitions participate, otherwise reuse would always miss.
+    for path in [
+        config_dir.join(".claude.json"),
+        config_dir.with_extension("json"),
+    ] {
+        if let Ok(bytes) = fs::read(path) {
+            if let Ok(config) = serde_json::from_slice::<Value>(&bytes) {
+                config.get("mcpServers").hash(&mut hash);
+                if let Some(project_config) = config
+                    .get("projects")
+                    .and_then(|projects| projects.get(&request.project_path))
+                {
+                    for field in [
+                        "mcpServers",
+                        "enabledMcpjsonServers",
+                        "disabledMcpjsonServers",
+                    ] {
+                        project_config.get(field).hash(&mut hash);
+                    }
+                }
+            }
+        }
+    }
+    key["configurationHash"] = serde_json::json!(hash.finish());
+    key
 }
 
 #[cfg(test)]
@@ -1004,6 +1147,35 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn reuse_key_tracks_connection_settings_but_ignores_turns_and_cli_counters() {
+        let root =
+            std::env::temp_dir().join(format!("claude-session-key-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        let mut request: super::ClaudeRequest = serde_json::from_value(json!({
+            "conversationId":"conversation", "sessionId":"session", "projectPath":root.to_string_lossy(),
+            "prompt":"first", "resume":false
+        })).unwrap();
+        let config = root.join(".claude");
+        let global = root.join(".claude.json");
+        std::fs::write(&global, r#"{"mcpServers":{},"numStartups":1}"#).unwrap();
+        let original = super::session_key(&request, &config);
+        request.prompt = "second".into();
+        request.resume = true;
+        std::fs::write(&global, r#"{"mcpServers":{},"numStartups":2}"#).unwrap();
+        assert_eq!(original, super::session_key(&request, &config));
+        std::fs::write(
+            root.join(".mcp.json"),
+            r#"{"mcpServers":{"browser":{"command":"node"}}}"#,
+        )
+        .unwrap();
+        assert_ne!(original, super::session_key(&request, &config));
+        let configured = super::session_key(&request, &config);
+        request.permission_mode = Some("plan".into());
+        assert_ne!(configured, super::session_key(&request, &config));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn extracts_tool_permission_requests_for_the_product_ui() {

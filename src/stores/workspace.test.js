@@ -424,7 +424,7 @@ describe('workspace supplemental messages', () => {
     }))
   })
 
-  it('waits for the process exit before declaring a successful result complete', async () => {
+  it.each(['turn_complete', 'exit'])('waits for backend %s before declaring a successful result complete', async (kind) => {
     const store = setupStore()
     store.runs['conversation-1'] = runningRun()
 
@@ -437,9 +437,32 @@ describe('workspace supplemental messages', () => {
     expect(store.activeContext.measured).toBe(false)
     expect(store.activeContext.cumulativeTokens).toBe(634000)
 
-    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: true } })
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind, data: { success: true } })
     await vi.waitFor(() => expect(store.activeRun).toBeNull())
     expect(store.activeMessages.at(-1)).toMatchObject({ role: 'assistant', content: '已完成' })
+  })
+
+  it.each(['stopping', 'steering', 'running'])('handles a persistent turn boundary in %s state without accepting stale events', async (status) => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun(status, 'Partial response')
+    const dispatch = vi.spyOn(store, 'dispatchNextQueued').mockResolvedValue()
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'turn_complete', data: { success: true } })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(dispatch).toHaveBeenCalledTimes(status === 'stopping' ? 0 : 1)
+    store.runs['conversation-1'] = { ...runningRun(), runId: 'next-run' }
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'exit', data: { success: false } })
+    expect(store.activeRun.runId).toBe('next-run')
+    expect(store.activeRun.status).toBe('running')
+  })
+
+  it('pauses queued work after an empty persistent turn', async () => {
+    const store = setupStore()
+    store.runs['conversation-1'] = runningRun()
+    const dispatch = vi.spyOn(store, 'dispatchNextQueued').mockResolvedValue()
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-current', kind: 'turn_complete', data: { success: true } })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(store.activeMessages.at(-1).content).toContain('empty-response')
   })
 
   it('does not present non-fatal stderr diagnostics as a run error', async () => {

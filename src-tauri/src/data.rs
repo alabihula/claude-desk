@@ -332,6 +332,10 @@ pub fn touch_project(app: AppHandle, id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn remove_project(app: AppHandle, id: String) -> Result<(), String> {
+    for conversation in list_conversations(app.clone(), id.clone())? {
+        app.state::<crate::claude::ClaudeProcesses>()
+            .release(&conversation.id);
+    }
     connect(&app)?
         .execute("DELETE FROM projects WHERE id = ?1", [id])
         .map_err(|error| error.to_string())?;
@@ -492,6 +496,7 @@ pub fn replace_conversation_session(
 
 #[tauri::command]
 pub fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
+    app.state::<crate::claude::ClaudeProcesses>().release(&id);
     connect(&app)?
         .execute("DELETE FROM conversations WHERE id = ?1", [id])
         .map_err(|error| error.to_string())?;

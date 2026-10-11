@@ -1,4 +1,4 @@
-// Retry only a confirmed media rejection, once, after the process exits. Keep
+// Retry only a confirmed media rejection, once, after the backend completes the turn. The backend closes the old session before recovery. Keep
 // the session so earlier tool work is not replayed as a fresh user request.
 export function canRecoverMedia(run) {
   return run?.operation === 'chat' && run.status === 'error'

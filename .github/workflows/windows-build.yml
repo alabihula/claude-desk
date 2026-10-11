@@ -38,6 +38,12 @@ jobs:
       - name: Test frontend
         run: pnpm test
 
+      - name: Install Playwright Chromium for lifecycle regression
+        run: node tests/install-browser.mjs
+
+      - name: Test real Playwright session lifecycle
+        run: cargo test --manifest-path src-tauri/Cargo.toml real_playwright -- --ignored --nocapture
+
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
@@ -107,6 +113,12 @@ jobs:
       - name: Test frontend
         run: pnpm test
 
+      - name: Install Playwright Chromium for lifecycle regression
+        run: node tests/install-browser.mjs
+
+      - name: Test real Playwright session lifecycle
+        run: cargo test --manifest-path src-tauri/Cargo.toml real_playwright -- --ignored --nocapture
+
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 
@@ -168,6 +180,33 @@ jobs:
           if (-not $second.HasExited) { throw "A second Claude Desk instance remained running" }
           if ($process.HasExited) { throw "The original Claude Desk instance exited after a second launch" }
           Stop-Process -Id $process.Id -Force
+
+      - name: Install native WebView2 test driver
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          $webview = Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application" -Directory |
+            Where-Object Name -match '^\d+\.\d+\.\d+\.\d+$' | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $webview) { throw "WebView2 runtime not found" }
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$($webview.Name)/edgedriver_win64.zip" -OutFile "$env:RUNNER_TEMP/edgedriver.zip"
+          Expand-Archive "$env:RUNNER_TEMP/edgedriver.zip" "$env:RUNNER_TEMP/edgedriver" -Force
+          "CLAUDE_DESK_EDGE_DRIVER=$env:RUNNER_TEMP/edgedriver/msedgedriver.exe" >> $env:GITHUB_ENV
+          $uninstall = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+            Where-Object DisplayName -eq "Claude Desk" | Select-Object -First 1
+          $app = Get-ChildItem $uninstall.InstallLocation.Trim('"') -Filter "claude-desk.exe" -Recurse | Select-Object -First 1
+          "CLAUDE_DESK_TEST_APP=$($app.FullName)" >> $env:GITHUB_ENV
+
+      - name: Verify installed App lifecycle and console ownership
+        shell: pwsh
+        run: ./tests/windows-lifecycle.ps1
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-lifecycle-evidence
+          path: release/windows-lifecycle/
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:

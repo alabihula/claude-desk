@@ -210,11 +210,11 @@ fn append_windows_claude_paths(environment: &mut HashMap<String, String>) {
     }
 }
 
-pub fn stop_process_tree(pid: u32, run_id: &str) -> Result<(), String> {
+pub fn kill_process_tree(pid: u32) -> Result<(), String> {
     #[cfg(unix)]
     unsafe {
-        if libc::kill(-(pid as i32), libc::SIGINT) != 0 {
-            return Err(format!("Could not stop Claude run {run_id}"));
+        if libc::kill(-(pid as i32), libc::SIGKILL) != 0 {
+            return Err(format!("Could not stop Claude process {pid}"));
         }
     }
     #[cfg(windows)]
@@ -222,7 +222,7 @@ pub fn stop_process_tree(pid: u32, run_id: &str) -> Result<(), String> {
         let output = background_command("taskkill.exe")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output()
-            .map_err(|error| format!("Could not stop Claude run {run_id}: {error}"))?;
+            .map_err(|error| format!("Could not stop Claude process {pid}: {error}"))?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }

@@ -269,6 +269,11 @@ impl RunDiagnostics {
         }
     }
 
+    pub fn finish_turn(&mut self) {
+        self.completed_at = Some(Utc::now().to_rfc3339());
+        // No exit metadata: the CLI and its MCP processes remain alive.
+    }
+
     pub fn finish(&mut self, success: bool, code: Option<i32>, wait_error: Option<&str>) {
         self.completed_at = Some(Utc::now().to_rfc3339());
         self.exit_success = Some(success);

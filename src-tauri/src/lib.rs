@@ -1,4 +1,5 @@
 mod claude;
+mod claude_session;
 mod config;
 mod context;
 mod data;
@@ -86,6 +87,11 @@ pub fn run() {
             claude::interrupt_claude,
             claude::stop_claude,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Claude Desk");
+        .build(tauri::generate_context!())
+        .expect("error while building Claude Desk")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<ClaudeProcesses>().shutdown();
+            }
+        });
 }

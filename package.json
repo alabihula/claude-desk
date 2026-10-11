@@ -1,6 +1,6 @@
 {
   "name": "claude-desk",
-  "version": "0.1.56",
+  "version": "0.1.57",
   "private": true,
   "description": "An unofficial, native desktop client for Claude Code.",
   "license": "MIT",
@@ -32,6 +32,7 @@
     "vue": "^3.5.41"
   },
   "devDependencies": {
+    "@playwright/mcp": "0.0.83",
     "@tauri-apps/cli": "^2.11.4",
     "@vitejs/plugin-vue": "^6.0.4",
     "happy-dom": "^20.0.11",

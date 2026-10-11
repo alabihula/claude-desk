@@ -117,7 +117,7 @@ jobs:
         run: node tests/install-browser.mjs
 
       - name: Test real Playwright session lifecycle
-        run: cargo test --manifest-path src-tauri/Cargo.toml real_playwright -- --ignored --nocapture
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc real_playwright -- --ignored --nocapture
 
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc

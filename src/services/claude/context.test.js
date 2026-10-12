@@ -23,6 +23,13 @@ describe('Claude context status', () => {
     expect(shouldAutoCompact({ tokens: 190000, window: 200000, estimated: true }, {})).toBe(false)
   })
 
+  it('distinguishes unreported compacted usage from a measured zero', () => {
+    const pending = { tokens: 0, window: 200000, cumulativeTokens: 190000, source: 'compacted-pending' }
+    expect(contextStatus(pending)).toMatchObject({ measured: false, usagePending: true })
+    expect(shouldAutoCompact(pending)).toBe(false)
+    expect(contextStatus({ ...pending, source: 'claude-transcript' })).toMatchObject({ measured: true, usagePending: false, percentage: 0 })
+  })
+
   it('honors both current and legacy Claude compaction disable flags', () => {
     const current = { tokens: 190000, window: 200000, source: 'claude-transcript' }
 

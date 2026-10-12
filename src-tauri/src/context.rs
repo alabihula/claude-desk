@@ -48,7 +48,88 @@ pub fn context_window_for_model(
     }
 }
 
-pub fn latest_session_usage(config_dir: &Path, session_id: &str) -> Result<Option<i64>, String> {
+// A compaction without postTokens invalidates the old measurement; it does
+// not mean zero tokens. Keep its identity to reject a transcript not yet flushed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionUsage {
+    pub tokens: Option<i64>,
+    pub compacted: bool,
+    boundary_id: Option<String>,
+    measured_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+impl SessionUsage {
+    pub fn observe(&mut self, record: &Value) {
+        let timestamp = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
+        if record.get("type").and_then(Value::as_str) == Some("system") {
+            if record.get("subtype").and_then(Value::as_str) == Some("compact_boundary") {
+                self.compacted = true;
+                self.measured_at = timestamp;
+                self.boundary_id = record
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                self.tokens = record
+                    .pointer("/compactMetadata/postTokens")
+                    .or_else(|| record.pointer("/compact_metadata/post_tokens"))
+                    .and_then(Value::as_i64)
+                    .filter(|tokens| *tokens >= 0);
+            } else if record.get("compact_result").and_then(Value::as_str) == Some("success")
+                && !self.compacted
+            {
+                self.compacted = true;
+                self.tokens = None;
+            }
+        } else if record.get("type").and_then(Value::as_str) == Some("assistant") {
+            let tokens = usage_tokens(record.pointer("/message/usage"));
+            if tokens > 0 {
+                self.tokens = Some(tokens);
+                self.measured_at = timestamp;
+            }
+        }
+    }
+
+    pub fn newer_than(&self, timestamp: &str) -> bool {
+        self.measured_at
+            .zip(chrono::DateTime::parse_from_rfc3339(timestamp).ok())
+            .is_some_and(|(measured, saved)| measured > saved)
+    }
+
+    pub fn source(&self) -> &'static str {
+        if self.tokens.is_none() && self.compacted {
+            "compacted-pending"
+        } else {
+            "claude-transcript"
+        }
+    }
+
+    pub fn resolve(self, transcript: Option<Self>) -> Option<Self> {
+        if self.compacted {
+            // A live boundary is newer than an old on-disk assistant record.
+            // Prefer postTokens from disk only when it belongs to this boundary.
+            if self.tokens.is_none() {
+                if let Some(saved) = transcript.filter(|saved| {
+                    self.boundary_id.is_some() && saved.boundary_id == self.boundary_id
+                }) {
+                    return Some(saved);
+                }
+            }
+            Some(self)
+        } else if self.tokens.is_some() {
+            Some(self)
+        } else {
+            transcript
+        }
+    }
+}
+
+pub fn latest_session_usage(
+    config_dir: &Path,
+    session_id: &str,
+) -> Result<Option<SessionUsage>, String> {
     session_path(config_dir, session_id)?
         .map(|path| parse_session_usage(&path))
         .transpose()
@@ -78,9 +159,9 @@ pub fn session_path(config_dir: &Path, session_id: &str) -> Result<Option<PathBu
     Ok(None)
 }
 
-fn parse_session_usage(path: &Path) -> Result<Option<i64>, String> {
+fn parse_session_usage(path: &Path) -> Result<Option<SessionUsage>, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut latest = None;
+    let mut usage = SessionUsage::default();
     for line in BufReader::new(file).lines() {
         let Ok(line) = line else {
             continue;
@@ -88,26 +169,9 @@ fn parse_session_usage(path: &Path) -> Result<Option<i64>, String> {
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if record.get("subtype").and_then(Value::as_str) == Some("compact_boundary") {
-            // Compaction does not emit a normal assistant usage frame. Its
-            // postTokens value is the first authoritative size of the new context.
-            if let Some(tokens) = record
-                .pointer("/compactMetadata/postTokens")
-                .and_then(Value::as_i64)
-                .filter(|tokens| *tokens >= 0)
-            {
-                latest = Some(tokens);
-            }
-            continue;
-        }
-        if record.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let tokens = usage_tokens(record.pointer("/message/usage"));
-        if tokens > 0 {
-            latest = Some(tokens);
-        }
+        usage.observe(&record);
     }
+    let latest = (usage.tokens.is_some() || usage.compacted).then_some(usage);
     Ok(latest)
 }
 
@@ -151,7 +215,12 @@ mod tests {
             ),
         )
         .unwrap();
-        assert_eq!(parse_session_usage(&path).unwrap(), Some(76304));
+        assert_eq!(
+            parse_session_usage(&path)
+                .unwrap()
+                .and_then(|usage| usage.tokens),
+            Some(76304)
+        );
         fs::remove_file(path).unwrap();
     }
 
@@ -176,7 +245,12 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(parse_session_usage(&path).unwrap(), Some(post_tokens));
+            assert_eq!(
+                parse_session_usage(&path)
+                    .unwrap()
+                    .and_then(|usage| usage.tokens),
+                Some(post_tokens)
+            );
             fs::remove_file(path).unwrap();
         }
     }
@@ -197,7 +271,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(parse_session_usage(&path).unwrap(), Some(925));
+        assert_eq!(
+            parse_session_usage(&path)
+                .unwrap()
+                .and_then(|usage| usage.tokens),
+            Some(925)
+        );
         fs::remove_file(path).unwrap();
     }
 
@@ -215,8 +294,64 @@ mod tests {
             "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":100}}}\n",
         )
         .unwrap();
-        assert_eq!(latest_session_usage(&root, &session_id).unwrap(), Some(100));
+        assert_eq!(
+            latest_session_usage(&root, &session_id)
+                .unwrap()
+                .and_then(|usage| usage.tokens),
+            Some(100)
+        );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_post_tokens_invalidates_old_usage_and_next_reply_restores_it() {
+        let mut usage = super::SessionUsage::default();
+        usage.observe(&json!({"type":"assistant","message":{"usage":{"input_tokens":190000}}}));
+        usage.observe(&json!({"type":"system","subtype":"compact_boundary","uuid":"new","compactMetadata":{"preTokens":190000}}));
+        assert_eq!(usage.tokens, None);
+        assert_eq!(usage.source(), "compacted-pending");
+        // Neither cumulative billing usage nor a duplicate status is a new size.
+        usage.observe(&json!({"type":"result","usage":{"input_tokens":190000}}));
+        usage.observe(&json!({"type":"system","subtype":"status","compact_result":"success"}));
+        assert_eq!(usage.tokens, None);
+        usage.observe(&json!({"type":"assistant","message":{"usage":{"input_tokens":1200}}}));
+        assert_eq!(usage.tokens, Some(1200));
+        assert_eq!(usage.source(), "claude-transcript");
+    }
+
+    #[test]
+    fn live_compaction_rejects_stale_transcript_but_accepts_matching_boundary() {
+        let mut live = super::SessionUsage::default();
+        live.observe(&json!({"type":"system","subtype":"compact_boundary","uuid":"new","compact_metadata":{"pre_tokens":190000}}));
+        let mut stale = super::SessionUsage::default();
+        stale.observe(&json!({"type":"system","subtype":"compact_boundary","uuid":"old","compactMetadata":{"postTokens":180000}}));
+        assert_eq!(
+            live.clone().resolve(Some(stale)).unwrap().source(),
+            "compacted-pending"
+        );
+        let mut saved = super::SessionUsage::default();
+        saved.observe(&json!({"type":"system","subtype":"compact_boundary","uuid":"new","compactMetadata":{"postTokens":1200}}));
+        assert_eq!(live.resolve(Some(saved)).unwrap().tokens, Some(1200));
+    }
+
+    #[test]
+    fn refresh_requires_a_measurement_newer_than_persisted_compaction() {
+        let mut usage = super::SessionUsage::default();
+        usage.observe(&json!({"type":"assistant","timestamp":"2026-10-12T10:00:00Z","message":{"usage":{"input_tokens":190000}}}));
+        assert!(!usage.newer_than("2026-10-12T10:01:00Z"));
+        usage.observe(&json!({"type":"assistant","timestamp":"2026-10-12T10:02:00Z","message":{"usage":{"input_tokens":12000}}}));
+        assert!(usage.newer_than("2026-10-12T10:01:00Z"));
+    }
+
+    #[test]
+    fn stream_post_tokens_survive_duplicate_success_and_failed_compact_keeps_usage() {
+        let mut usage = super::SessionUsage::default();
+        usage.observe(&json!({"type":"system","subtype":"compact_boundary","compact_metadata":{"post_tokens":0}}));
+        usage.observe(&json!({"type":"system","subtype":"status","compact_result":"success"}));
+        assert_eq!(usage.tokens, Some(0));
+        usage.observe(&json!({"type":"assistant","message":{"usage":{"input_tokens":1500}}}));
+        usage.observe(&json!({"type":"system","subtype":"status","compact_result":"failed"}));
+        assert_eq!(usage.tokens, Some(1500));
     }
 
     #[test]

@@ -11,6 +11,8 @@ if (process.argv.includes('--version')) { console.log('2.1.0 (Claude Code)'); pr
 let outputDirectory
 process.on('exit', () => { if (outputDirectory) rmSync(outputDirectory, { recursive: true, force: true }) })
 let sequence = 0
+let compactions = 0
+let contextTokens = 120000
 let mcp
 let pending = new Map()
 let rpcId = 0
@@ -43,7 +45,7 @@ async function tool(name, args) {
   if (value.isError) throw new Error(JSON.stringify(value))
   return value.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n')
 }
-const finish = (result, error = false) => send({ type: 'result', subtype: error ? 'error_during_execution' : 'success', result, is_error: error })
+const finish = (result, error = false) => send({ modelUsage: { 'test-model': { contextWindow: 200000 } }, type: 'result', subtype: error ? 'error_during_execution' : 'success', result, is_error: error })
 let hanging = false
 const input = readline.createInterface({ input: process.stdin })
 input.on('line', async (line) => {
@@ -57,6 +59,18 @@ input.on('line', async (line) => {
   }
   if (value.type !== 'user') return
   const prompt = value.message.content.split('\n')[0].trim()
+  if (prompt.startsWith('/compact')) {
+    if (++compactions === 3) {
+      send({ type: 'system', subtype: 'status', compact_result: 'failed', compact_error: 'Not enough messages to compact.' })
+      finish('Not enough messages to compact.')
+      return
+    }
+    contextTokens = 12000
+    send({ type: 'system', subtype: 'compact_boundary', uuid: `compact-${compactions}`, compact_metadata: { pre_tokens: 120000, ...(compactions === 2 ? { post_tokens: contextTokens } : {}) } })
+    send({ type: 'system', subtype: 'status', compact_result: 'success' })
+    finish('')
+    return
+  }
   if (prompt === 'crash') process.exit(7)
   if (prompt === 'hang') { hanging = true; send({ type: 'assistant', message: { content: [{ type: 'text', text: 'Waiting' }] } }); return }
   try {
@@ -71,7 +85,7 @@ input.on('line', async (line) => {
       else if (prompt === 'new-tab') result = await tool('browser_tabs', { action: 'new' })
       else if (prompt === 'close-browser') result = await tool('browser_close', {})
     }
-    send({ type: 'assistant', message: { content: [{ type: 'text', text: result }] } })
+    send({ type: 'assistant', message: { content: [{ type: 'text', text: result }], usage: { input_tokens: contextTokens } } })
     finish(result)
   } catch (error) { finish(String(error), true) }
 })

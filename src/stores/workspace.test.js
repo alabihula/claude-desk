@@ -753,6 +753,40 @@ describe('workspace supplemental messages', () => {
     })
   })
 
+  it('clears stale percentage at an older CLI compact boundary and restores it on the next reply', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = { tokens: 190000, window: 200000, measured: true, source: 'claude-transcript' }
+    await store.compactConversation()
+    const emit = (kind, data) => store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-next', kind, data })
+    emit('stream', { type: 'system', subtype: 'compact_boundary', compact_metadata: { pre_tokens: 190000 } })
+    expect(store.activeContext).toMatchObject({ measured: false, usagePending: true })
+    emit('stream', { type: 'result', is_error: false, usage: { input_tokens: 190000 } })
+    emit('context', { tokens: 0, window: 200000, source: 'compacted-pending' })
+    emit('turn_complete', { success: true })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeContext).toMatchObject({ measured: false, usagePending: true, percentage: 0 })
+    await store.sendMessage('continue')
+    expect(desktop.sendClaude.mock.calls.map(([request]) => request.operation)).toEqual(['compact', 'chat'])
+    emit('stream', { type: 'assistant', message: { content: [{ type: 'text', text: 'Done' }], usage: { input_tokens: 12000 } } })
+    emit('turn_complete', { success: true })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeContext).toMatchObject({ measured: true, usagePending: false, percentage: 6 })
+  })
+
+  it('uses streamed post-compaction tokens and ignores duplicate success status', async () => {
+    const store = setupStore()
+    store.contextStats['conversation-1'] = { tokens: 190000, window: 200000, measured: true }
+    await store.compactConversation()
+    for (const data of [
+      { type: 'system', subtype: 'compact_boundary', compact_metadata: { pre_tokens: 190000, post_tokens: 12000 } },
+      { type: 'system', subtype: 'status', compact_result: 'success' },
+      { type: 'result', is_error: false },
+    ]) store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-next', kind: 'stream', data })
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'run-next', kind: 'turn_complete', data: { success: true } })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeContext).toMatchObject({ tokens: 12000, percentage: 6, measured: true, usagePending: false })
+  })
+
   it('does not report manual compaction as complete when Claude rejects it', async () => {
     const store = setupStore()
     store.contextStats['conversation-1'] = {

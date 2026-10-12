@@ -596,18 +596,25 @@ pub fn refresh_context_stats(
     let existing = context_stats(&connection, &conversation_id)?;
     let home_dir = app.path().home_dir().map_err(|error| error.to_string())?;
     let config_dir = context::default_config_dir(home_dir);
-    let Some(tokens) = context::latest_session_usage(&config_dir, &session_id)? else {
+    let Some(usage) = context::latest_session_usage(&config_dir, &session_id)? else {
         return Ok(existing);
     };
+    // The live stream can finish before JSONL is flushed. Never restore an
+    // older measurement over a persisted, successfully compacted context.
+    if existing.as_ref().is_some_and(|saved| {
+        saved.source == "compacted-pending" && !usage.newer_than(&saved.updated_at)
+    }) {
+        return Ok(existing);
+    }
     let stats = ContextStats {
         conversation_id,
-        tokens,
+        tokens: usage.tokens.unwrap_or(0),
         window: existing.as_ref().map(|item| item.window).unwrap_or(0),
         cumulative_tokens: existing
             .as_ref()
             .map(|item| item.cumulative_tokens)
             .unwrap_or(0),
-        source: "claude-transcript".into(),
+        source: usage.source().into(),
         model: existing
             .as_ref()
             .map(|item| item.model.clone())

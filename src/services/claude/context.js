@@ -50,7 +50,7 @@ export function contextStatus(current = {}, env = {}, model = current.model) {
   const measured = Boolean(
     (selected.measured || selected.source === 'claude-transcript')
       && !selected.estimated
-      && reportedTokens
+      && Number.isFinite(Number(selected.tokens)) && Number(selected.tokens) >= 0
       && (!window || reportedTokens <= window),
   )
   const threshold = compactThreshold(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)
@@ -62,6 +62,7 @@ export function contextStatus(current = {}, env = {}, model = current.model) {
     estimated: false,
     cumulativeTokens,
     source: selected.source || '',
+    usagePending: selected.source === 'compacted-pending',
     model: selected.model,
     modelWindows: selected.modelWindows || {},
     // An explicit window override is authoritative for every model, so there

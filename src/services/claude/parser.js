@@ -83,6 +83,14 @@ export function parseClaudeEvent(payload) {
     })
   }
 
+  if (payload.type === 'system' && payload.subtype === 'compact_boundary') {
+    const tokens = payload.compact_metadata?.post_tokens ?? payload.compactMetadata?.postTokens
+    events.push({
+      type: 'compact-result', success: true, error: '', boundary: true,
+      tokens: Number.isFinite(tokens) && tokens >= 0 ? tokens : null,
+    })
+  }
+
   if (payload.type === 'stream_event') {
     const event = payload.event || {}
     if (event.type === 'message_start') {

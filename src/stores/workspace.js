@@ -710,12 +710,20 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (applyRunTimelineEvent(run, event)) continue
           if (event.type === 'compact-result') {
             run.compactResult = event.success ? 'success' : 'failed'
+            if (event.success && (!run.contextCompacted || event.boundary)) {
+              run.contextCompacted = true
+              Object.assign(run.context, {
+                tokens: event.tokens ?? 0, measured: event.tokens != null, estimated: false,
+                source: event.tokens != null ? 'claude-transcript' : 'compacted-pending',
+                lastCompactedAt: new Date().toISOString(),
+              })
+            }
             if (!event.success) {
               run.status = 'error'
               run.error = event.error || 'Claude could not compact this conversation.'
             }
           }
-          if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false })
+          if (event.type === 'usage') Object.assign(run.context, { tokens: event.tokens, measured: true, estimated: false, source: 'claude-transcript' })
           if (event.type === 'mcp-runtime') {
             run.mcpRuntime = { ...event.runtime, runId: payload.runId }
             const observed = this.mcpRuntimeByConversation[payload.conversationId]
@@ -807,7 +815,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         } catch (error) { run.error = String(error) }
       }
       for (const activity of run.activities) if (activity.status === 'running') activity.status = run.status === 'complete' ? 'success' : 'error'
-      if (run.context.measured || run.context.window) this.contextStats[conversationId] = { ...run.context }
+      if (run.context.measured || run.context.window || run.context.source === 'compacted-pending') this.contextStats[conversationId] = { ...run.context }
       if (run.operation === 'compact' && run.status === 'complete') {
         const compactedAt = new Date().toISOString()
         this.contextStats[conversationId] = { ...run.context, lastCompactedAt: compactedAt }

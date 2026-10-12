@@ -615,6 +615,7 @@ pub async fn send_claude(
         );
         let mut context_window = 0;
         let mut cumulative_tokens = 0;
+        let mut stream_usage = context::SessionUsage::default();
         let mut completion = None;
         while let Some(event) = events.recv().await {
             match event {
@@ -672,6 +673,7 @@ pub async fn send_claude(
                         );
                         continue;
                     }
+                    stream_usage.observe(&payload);
                     let is_result = payload.get("type").and_then(Value::as_str) == Some("result");
                     if is_result {
                         context_window = context::context_window(payload.get("modelUsage"));
@@ -748,26 +750,22 @@ pub async fn send_claude(
         if !context_model_for_task.is_empty() && effective_context_window > 0 {
             model_windows.insert(context_model_for_task.clone(), effective_context_window);
         }
-        for attempt in 0..3 {
-            match context::latest_session_usage(&context_config_dir, &session_id) {
-                Ok(Some(tokens)) => {
-                    let stats = data::ContextStats {
-                        conversation_id: conversation_id.clone(),
-                        tokens,
-                        window: effective_context_window,
-                        cumulative_tokens: effective_cumulative_tokens,
-                        source: "claude-transcript".into(),
-                        model: context_model_for_task.clone(),
-                        model_windows: model_windows.clone(),
-                        updated_at: Utc::now().to_rfc3339(),
-                    };
-                    if data::save_context_stats(&app_for_task, &stats).is_ok() {
-                        context_stats = Some(stats);
-                    }
-                    break;
-                }
-                Ok(None) if attempt < 2 => sleep(Duration::from_millis(100)).await,
-                Ok(None) | Err(_) => break,
+        let transcript = context::latest_session_usage(&context_config_dir, &session_id)
+            .ok()
+            .flatten();
+        if let Some(usage) = stream_usage.resolve(transcript) {
+            let stats = data::ContextStats {
+                conversation_id: conversation_id.clone(),
+                tokens: usage.tokens.unwrap_or(0),
+                window: effective_context_window,
+                cumulative_tokens: effective_cumulative_tokens,
+                source: usage.source().into(),
+                model: context_model_for_task.clone(),
+                model_windows: model_windows.clone(),
+                updated_at: Utc::now().to_rfc3339(),
+            };
+            if data::save_context_stats(&app_for_task, &stats).is_ok() {
+                context_stats = Some(stats);
             }
         }
         if context_stats.is_none() && (context_window > 0 || cumulative_tokens > 0) {

@@ -13,6 +13,7 @@ const canCompact = computed(() => !store.activeRun && store.activeMessages.some(
 
 const label = computed(() => {
   if (store.activeRun?.operation === 'compact') return t('context.compacting')
+  if (context.value.usagePending) return t('context.compactedPending')
   if (context.value.windowPending) return t('context.windowPending')
   if (context.value.measured && context.value.window) return t('context.percent', { value: `${context.value.estimated ? '~' : ''}${context.value.percentage}` })
   if (context.value.measured) return t('context.tokens', { value: `${context.value.estimated ? '~' : ''}${tokens(context.value.tokens)}` })
@@ -43,7 +44,8 @@ async function compact() {
     </summary>
     <div class="context-popover">
       <header><strong>{{ t('context.title') }}</strong><small>{{ t(context.autoCompact ? 'context.autoAt' : 'context.autoOff', { value: context.threshold }) }}</small></header>
-      <p v-if="context.windowPending">{{ t('context.windowPendingHelp') }}</p>
+      <p v-if="context.usagePending">{{ t('context.compactedPendingHelp') }}</p>
+      <p v-else-if="context.windowPending">{{ t('context.windowPendingHelp') }}</p>
       <template v-else-if="context.measured && context.window">
         <div class="context-progress"><i :style="{ width: `${context.percentage}%` }"></i></div>
         <p>{{ t('context.usageWindow', { approx: context.estimated ? t('context.approximately') : '', used: tokens(context.tokens), total: tokens(context.window) }) }}</p>

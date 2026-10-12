@@ -752,7 +752,12 @@ pub async fn send_claude(
         }
         let transcript = context::latest_session_usage(&context_config_dir, &session_id)
             .ok()
-            .flatten();
+            .flatten()
+            .filter(|usage| {
+                !previous_context.as_ref().is_some_and(|saved| {
+                    saved.source == "compacted-pending" && !usage.newer_than(&saved.updated_at)
+                })
+            });
         if let Some(usage) = stream_usage.resolve(transcript) {
             let stats = data::ContextStats {
                 conversation_id: conversation_id.clone(),
@@ -768,13 +773,20 @@ pub async fn send_claude(
                 context_stats = Some(stats);
             }
         }
-        if context_stats.is_none() && (context_window > 0 || cumulative_tokens > 0) {
+        // A rejected slash command (or a turn with no usage frame) does not
+        // invalidate the last measurement. Preserve it, including pending usage.
+        let retained_context = previous_context.as_ref().filter(|_| !recovered_session);
+        if context_stats.is_none()
+            && (context_window > 0 || cumulative_tokens > 0 || retained_context.is_some())
+        {
             let stats = data::ContextStats {
                 conversation_id: conversation_id.clone(),
-                tokens: 0,
+                tokens: retained_context.map(|stats| stats.tokens).unwrap_or(0),
                 window: effective_context_window,
                 cumulative_tokens: effective_cumulative_tokens,
-                source: "provider-cumulative".into(),
+                source: retained_context
+                    .map(|stats| stats.source.clone())
+                    .unwrap_or_else(|| "provider-cumulative".into()),
                 model: context_model_for_task,
                 model_windows,
                 updated_at: Utc::now().to_rfc3339(),

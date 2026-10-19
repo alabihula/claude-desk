@@ -443,6 +443,14 @@ pub async fn send_claude(
             skills::resolve_external_skill(&app, Path::new(&request.project_path), Path::new(path))
         })
         .transpose()?;
+    let project_root =
+        fs::canonicalize(&request.project_path).map_err(|error| error.to_string())?;
+    let skill_dir = skill_dir.filter(|dir| !dir.starts_with(&project_root));
+    // Only an additional, validated directory affects process access. Project
+    // skills already fall within the working directory and need no restart.
+    request.skill_path = skill_dir
+        .as_ref()
+        .map(|dir| dir.to_string_lossy().into_owned());
     request.model = model.clone();
     request.effort = effort.clone();
     // Resolve persisted identity, not a queued message's possibly pre-recovery snapshot.

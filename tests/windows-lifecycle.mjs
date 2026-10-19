@@ -1,8 +1,9 @@
 // Drives the installed production App through the native WebView2 WebDriver.
 // No QA hooks or command mocks are compiled into the shipping binary.
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 const app = process.env.CLAUDE_DESK_TEST_APP
 assert(app, 'Installed App path is required')
@@ -15,9 +16,13 @@ for (const directory of [project, otherProject]) {
   writeFileSync(join(directory, 'example.txt'), 'lifecycle test file\n')
   assert.equal(spawnSync('git', ['init', directory], { windowsHide: true }).status, 0)
 }
-const skillDirectory = join(project, '.agents', 'skills', 'lifecycle')
-mkdirSync(skillDirectory, { recursive: true })
+const sharedSkills = join(homedir(), '.agents', 'skills')
+mkdirSync(sharedSkills, { recursive: true })
+const skillDirectory = mkdtempSync(join(sharedSkills, 'claude-desk-lifecycle-'))
 writeFileSync(join(skillDirectory, 'SKILL.md'), '---\nname: lifecycle\ndescription: Test fixture skill\n---\nUse only the test browser.\n')
+const projectSkillDirectory = join(project, '.agents', 'skills', 'project-lifecycle')
+mkdirSync(projectSkillDirectory, { recursive: true })
+writeFileSync(join(projectSkillDirectory, 'SKILL.md'), '---\nname: project-lifecycle\ndescription: Project access test\n---\nUse only the test browser.\n')
 const wrapper = join(root, 'fixture.cmd')
 writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${resolve('tests/fixtures/claude-session.mjs')}" %*\r\n`)
 let session
@@ -88,6 +93,11 @@ try {
   assert.equal(events[0].data.pid, events[1].data.pid)
   assert.equal(events[1].data.reusedSession, true)
   pass('external skill then ordinary turn preserve the same PID and real Playwright page')
+  await evaluate('const skill = (await window.__TAURI_INTERNALS__.invoke("list_claude_skills", { projectPath: args[0] })).find(skill => skill.name === "project-lifecycle"); await store.sendMessage("check", [], skill)', [project])
+  await until('return !store.activeRun', 'project skill did not finish')
+  assert((await send('check')).includes('same-live-page'))
+  assert.equal(await evaluate('return window.testEvents.at(-1).data.pid'), events[0].data.pid)
+  pass('switching to a project skill requires no additional directory grant or restart')
   phase('manual compaction context meter')
   assert.equal(await evaluate('return store.activeContext.percentage'), 60)
   await evaluate('await store.compactConversation()')
@@ -180,6 +190,7 @@ try {
   assert.equal(alive.stdout.trim(), 'False', 'App must exit before WebDriver session disposal')
   pass('normal window close exits App before driver disposal')
 } finally {
+  rmSync(skillDirectory, { recursive: true, force: true })
   writeFileSync(join(root, 'report.json'), JSON.stringify({ checks: report }, null, 2))
   if (session) await api('DELETE', `/session/${session}`).catch(() => {})
 }

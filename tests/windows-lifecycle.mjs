@@ -48,8 +48,10 @@ const report = []
 const pass = (message) => { report.push(message); console.log(`PASS ${message}`) }
 async function send(prompt) {
   phase(`send ${prompt}`)
-  await evaluate('await store.sendMessage(args[0]);', [prompt])
-  await until('return !store.activeRun', `turn did not finish: ${prompt}`)
+  await evaluate('window.assistantCountBeforeSend = store.activeMessages.filter(m => m.role === "assistant").length; await store.sendMessage(args[0]);', [prompt])
+  // Automatic compaction briefly leaves no active run before dispatching the
+  // queued chat. Wait for this message's answer, not that intermediate gap.
+  await until('return !store.activeRun && !store.activeQueuedMessages.length && store.activeMessages.filter(m => m.role === "assistant").length > window.assistantCountBeforeSend', `turn did not finish: ${prompt}`)
   const text = await evaluate('return store.activeMessages.filter(m => m.role === "assistant").at(-1)?.content')
   assert(text, `No assistant response: ${prompt}`)
   return text
@@ -153,12 +155,13 @@ try {
   // Scope validation remains in Rust, including during a persistent session.
   assert(await evaluate('try { await window.__TAURI_INTERNALS__.invoke("read_project_file", { projectPath: args[0], sourcePath: "../outside.txt" }); return false } catch { return true }', [project]))
   pass('out-of-project file boundary rejected')
+  await evaluate('store.closeFilePreview()')
   const beforeChange = await evaluate('return window.testEvents.at(-1).data.pid')
   await evaluate('store.settings.permissionMode = "plan"')
   assert(!(await send('check')).includes('same-live-page'))
   assert.notEqual(await evaluate('return window.testEvents.at(-1).data.pid'), beforeChange)
   assert(await evaluate('return store.activeMessages.some(m => m.content === "claude-desk:mcp-session:configuration-changed")'))
-  assert((await evaluate('return document.body.textContent')).includes('Claude and MCP need to reconnect'))
+  await until('return document.body.textContent.includes("Claude and MCP need to reconnect")', 'configuration restart notice was not rendered')
   pass('changed settings restart with a visible persisted explanation')
   const retained = await evaluate('return window.testEvents.at(-1).data.pid')
   for (let index = 0; index < 3; index++) {

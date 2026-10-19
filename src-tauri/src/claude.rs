@@ -1,5 +1,6 @@
 use crate::{
     claude_session::{Event as SessionEvent, Session},
+    claude_session_key::{compatible, session_key},
     context, data, diagnostics, platform, runtime, session_recovery, skills,
 };
 use chrono::Utc;
@@ -433,17 +434,33 @@ pub async fn send_claude(
     runtime::normalize_model(Some(context_model))?;
     let context_model = context_model.to_string();
     let effort = runtime::normalize_effort(request.effort.as_deref())?;
+    // Validate before replacing a healthy transport: a missing/disabled skill
+    // must fail this request without destroying the user's browser session.
+    let skill_dir = request
+        .skill_path
+        .as_deref()
+        .map(|path| {
+            skills::resolve_external_skill(&app, Path::new(&request.project_path), Path::new(path))
+        })
+        .transpose()?;
+    request.model = model.clone();
+    request.effort = effort.clone();
     // Resolve persisted identity, not a queued message's possibly pre-recovery snapshot.
     request.session_id = data::conversation_session(&app, &request.conversation_id)?;
-    let reuse_key = session_key(&request, &context_config_dir);
+    let mut reuse_key = session_key(&request, &context_config_dir);
     let (reused_session, replaced_session) = {
         let mut running = state
             .running
             .lock()
             .map_err(|_| "Claude process state is unavailable")?;
         if let Some(process) = running.get(&request.conversation_id).filter(|process| {
-            process.reuse_key == reuse_key && process.session.is_alive() && !request.recover_media
+            compatible(&process.reuse_key, &reuse_key)
+                && process.session.is_alive()
+                && !request.recover_media
         }) {
+            // Retain the actual launch configuration, including already granted
+            // skill directories, rather than replacing it with this turn's fields.
+            reuse_key = process.reuse_key.clone();
             (Some(process.session.clone()), None)
         } else {
             (
@@ -455,6 +472,17 @@ pub async fn send_claude(
         }
     };
     if let Some(session) = replaced_session {
+        session_notice(
+            &app,
+            &request.conversation_id,
+            if request.recover_media {
+                "history-recovery"
+            } else if session.is_alive() {
+                "configuration-changed"
+            } else {
+                "connection-ended"
+            },
+        );
         session.close().await;
     }
     let mut recovered_session = false;
@@ -469,6 +497,7 @@ pub async fn send_claude(
                 &session_id,
             )?;
             request.session_id = session_id;
+            reuse_key = session_key(&request, &context_config_dir);
             request.prompt = format!(
                 "{}\n\n{}",
                 request.prompt,
@@ -503,14 +532,7 @@ pub async fn send_claude(
             "--permission-prompt-tool",
             "stdio",
         ]);
-    if let Some(skill_path) = request.skill_path.as_deref() {
-        // External Codex skills are shown only when the backend can still
-        // resolve them from an enabled source at dispatch time.
-        let skill_dir = skills::resolve_external_skill(
-            &app,
-            Path::new(&request.project_path),
-            Path::new(skill_path),
-        )?;
+    if let Some(skill_dir) = skill_dir {
         command.arg("--add-dir").arg(skill_dir);
     }
     // Attachments are app-owned copies outside the project working directory.
@@ -598,6 +620,34 @@ pub async fn send_claude(
             );
     }
 
+    if !reused {
+        let watched = session.clone();
+        let app = app.clone();
+        let id = request.conversation_id.clone();
+        tauri::async_runtime::spawn(async move {
+            watched.closed().await;
+            // Busy turns report exit through their own event receiver. Only an
+            // unexpected idle exit needs this watcher; explicit releases remove
+            // their entry first. This wait has no polling timer.
+            let removed = app.try_state::<ClaudeProcesses>().is_some_and(|state| {
+                let Ok(mut running) = state.running.lock() else {
+                    return false;
+                };
+                if running
+                    .get(&id)
+                    .is_some_and(|process| !process.busy && Arc::ptr_eq(&process.session, &watched))
+                {
+                    running.remove(&id);
+                    true
+                } else {
+                    false
+                }
+            });
+            if removed {
+                session_notice(&app, &id, "connection-ended");
+            }
+        });
+    }
     let app_for_task = app.clone();
     let conversation_id = request.conversation_id.clone();
     let session_id = request.session_id.clone();
@@ -804,6 +854,7 @@ pub async fn send_claude(
                 serde_json::to_value(stats).unwrap_or_else(|_| serde_json::json!({})),
             );
         }
+        let mut transport_ended = !turn_complete;
         if let Some(state) = app_for_task.try_state::<ClaudeProcesses>() {
             if let Ok(mut running) = state.running.lock() {
                 // A late old process must never remove a replacement session.
@@ -814,10 +865,14 @@ pub async fn send_claude(
                     process.busy = false;
                     process.last_used = std::time::Instant::now();
                     if !session.is_alive() {
+                        transport_ended = true;
                         running.remove(&conversation_id);
                     }
                 }
             }
+        }
+        if transport_ended {
+            session_notice(&app_for_task, &conversation_id, "connection-ended");
         }
         if turn_complete {
             run_diagnostics.finish_turn();
@@ -835,7 +890,7 @@ pub async fn send_claude(
             );
         }
         if let Some(state) = app_for_task.try_state::<ClaudeProcesses>() {
-            state.prune_idle();
+            state.prune_idle(&app_for_task);
         }
         emit(
             &app_for_task,
@@ -1050,7 +1105,7 @@ impl ClaudeProcesses {
         gates.insert(conversation_id.to_string(), Arc::downgrade(&gate));
         Ok(gate)
     }
-    fn prune_idle(&self) {
+    fn prune_idle(&self, app: &AppHandle) {
         let Ok(mut running) = self.running.lock() else {
             return;
         };
@@ -1062,10 +1117,15 @@ impl ClaudeProcesses {
         idle.sort_by_key(|(_, time)| *time);
         // Bound memory/browser retention across many conversations; active work is never evicted.
         let count = idle.len().saturating_sub(3);
-        for (id, _) in idle.into_iter().take(count) {
-            if let Some(process) = running.remove(&id) {
-                process.session.request_close();
-            }
+        let released: Vec<_> = idle
+            .into_iter()
+            .take(count)
+            .filter_map(|(id, _)| running.remove(&id).map(|process| (id, process.session)))
+            .collect();
+        drop(running);
+        for (id, session) in released {
+            session_notice(app, &id, "idle-limit");
+            session.request_close();
         }
     }
     pub fn release(&self, conversation_id: &str) {
@@ -1109,58 +1169,23 @@ impl ClaudeProcesses {
     }
 }
 
-fn session_key(request: &ClaudeRequest, config_dir: &Path) -> Value {
-    use std::hash::{Hash, Hasher};
-    let mut key = serde_json::to_value(request).unwrap_or_default();
-    if let Some(fields) = key.as_object_mut() {
-        for name in [
-            "prompt",
-            "resume",
-            "recoverMedia",
-            "contextModel",
-            "operation",
-        ] {
-            fields.remove(name);
-        }
+// Persist first so a notice for an inactive conversation survives reloads.
+fn session_notice(app: &AppHandle, conversation_id: &str, reason: &str) {
+    if let Ok(message) = data::save_message(
+        app.clone(),
+        conversation_id.into(),
+        "system".into(),
+        format!("claude-desk:mcp-session:{reason}"),
+        None,
+    ) {
+        emit(
+            app,
+            conversation_id,
+            "",
+            "session_notice",
+            serde_json::to_value(message).unwrap_or_default(),
+        );
     }
-    // Claude reads settings/MCP definitions on startup. Restart at the next turn
-    // when their content changes, without persisting secrets in diagnostics.
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    let project = Path::new(&request.project_path);
-    for path in [
-        config_dir.join("settings.json"),
-        project.join(".mcp.json"),
-        project.join(".claude/settings.json"),
-        project.join(".claude/settings.local.json"),
-    ] {
-        fs::read(path).ok().hash(&mut hash);
-    }
-    // ~/.claude.json also contains counters/timestamps updated by every turn.
-    // Only connection definitions participate, otherwise reuse would always miss.
-    for path in [
-        config_dir.join(".claude.json"),
-        config_dir.with_extension("json"),
-    ] {
-        if let Ok(bytes) = fs::read(path) {
-            if let Ok(config) = serde_json::from_slice::<Value>(&bytes) {
-                config.get("mcpServers").hash(&mut hash);
-                if let Some(project_config) = config
-                    .get("projects")
-                    .and_then(|projects| projects.get(&request.project_path))
-                {
-                    for field in [
-                        "mcpServers",
-                        "enabledMcpjsonServers",
-                        "disabledMcpjsonServers",
-                    ] {
-                        project_config.get(field).hash(&mut hash);
-                    }
-                }
-            }
-        }
-    }
-    key["configurationHash"] = serde_json::json!(hash.finish());
-    key
 }
 
 #[cfg(test)]

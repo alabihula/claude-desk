@@ -33,6 +33,7 @@ function toolsLabel(server) { return mcpToolsLabel(server, props) }
     </header>
     <div class="mcp-panel-notice">
       <span>{{ t(active ? 'mcp.liveHelp' : 'mcp.idleHelp') }}</span>
+      <span>{{ t('mcp.lifecycleHelp') }}</span>
       <span v-if="liveError" class="mcp-notice-error">{{ t(liveError) }}</span>
       <span v-if="error && rows.length" class="mcp-notice-error">{{ t('mcp.checkStale') }}</span>
     </div>

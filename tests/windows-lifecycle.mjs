@@ -1,7 +1,7 @@
 // Drives the installed production App through the native WebView2 WebDriver.
 // No QA hooks or command mocks are compiled into the shipping binary.
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 const app = process.env.CLAUDE_DESK_TEST_APP
@@ -15,6 +15,9 @@ for (const directory of [project, otherProject]) {
   writeFileSync(join(directory, 'example.txt'), 'lifecycle test file\n')
   assert.equal(spawnSync('git', ['init', directory], { windowsHide: true }).status, 0)
 }
+const skillDirectory = join(project, '.agents', 'skills', 'lifecycle')
+mkdirSync(skillDirectory, { recursive: true })
+writeFileSync(join(skillDirectory, 'SKILL.md'), '---\nname: lifecycle\ndescription: Test fixture skill\n---\nUse only the test browser.\n')
 const wrapper = join(root, 'fixture.cmd')
 writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${resolve('tests/fixtures/claude-session.mjs')}" %*\r\n`)
 let session
@@ -66,7 +69,7 @@ try {
   session = created.sessionId
   await api('POST', `/session/${session}/timeouts`, { script: 90000 })
   await until('return store && !store.loading', 'App initialization failed')
-  await evaluate(`store.settings = { ...store.settings, command: args[0], args: ['--playwright'], env: {}, language: 'en' }; await store.refreshHealth(); window.testEvents = []; const original = store.handleClaudeEvent; store.handleClaudeEvent = event => { if (event.kind === 'started') window.testEvents.push(event); return original(event) };`, [wrapper])
+  await evaluate(`store.settings = { ...store.settings, command: args[0], args: ['--playwright'], env: {}, language: 'en' }; await store.refreshHealth(); store.claudeSettings = { model: 'fixture-default' }; window.testEvents = []; const original = store.handleClaudeEvent; store.handleClaudeEvent = event => { if (event.kind === 'started') window.testEvents.push(event); return original(event) };`, [wrapper])
   assert.equal(await evaluate('return store.health.available'), true)
   phase('second App launch')
   const duplicate = spawn(app, [], { windowsHide: true, stdio: 'ignore' })
@@ -77,12 +80,14 @@ try {
   await pause(9500) // More than three Git refresh intervals.
   await evaluate('await store.addProject(args[0]); await store.selectProject(window.firstProject, window.firstConversation)', [otherProject])
   pass('add/select/switch projects and multiple Git polling intervals')
-  assert((await send('open')).includes('same-live-page'))
+  await evaluate('window.lifecycleSkill = (await window.__TAURI_INTERNALS__.invoke("list_claude_skills", { projectPath: args[0] })).find(skill => skill.name === "lifecycle"); if (!window.lifecycleSkill) throw new Error("Test skill not found"); await store.sendMessage("open", [], window.lifecycleSkill)', [project])
+  await until('return !store.activeRun', 'skill browser turn did not finish')
+  assert((await evaluate('return store.activeMessages.filter(m => m.role === "assistant").at(-1)?.content')).includes('same-live-page'))
   assert((await send('check')).includes('same-live-page'))
   let events = await evaluate('return window.testEvents')
   assert.equal(events[0].data.pid, events[1].data.pid)
   assert.equal(events[1].data.reusedSession, true)
-  pass('two real Playwright turns preserve the same PID and in-page state')
+  pass('external skill then ordinary turn preserve the same PID and real Playwright page')
   phase('manual compaction context meter')
   assert.equal(await evaluate('return store.activeContext.percentage'), 60)
   await evaluate('await store.compactConversation()')
@@ -101,12 +106,31 @@ try {
   await until('return !store.activeRun', 'rejected compaction did not finish')
   assert.equal(await evaluate('return store.activeContext.percentage'), 6)
   pass('manual compaction: missing/post tokens, persisted pending state, next-reply refresh, repeated/rejected compact and unchanged Playwright browser')
+  assert((await send('check')).includes('same-live-page'))
+  assert.equal(await evaluate('return window.testEvents.at(-1).data.pid'), events[0].data.pid)
+  await evaluate('store.contextStats[store.activeConversationId] = { ...store.contextStats[store.activeConversationId], tokens: 195000, measured: true }')
+  assert((await send('check')).includes('same-live-page'))
+  assert.equal(await evaluate('return window.testEvents.at(-1).data.pid'), events[0].data.pid)
+  pass('configured default model: manual/automatic/rejected compaction retain original browser and PID')
+  rmSync(skillDirectory, { recursive: true })
+  await evaluate('await store.sendMessage("check", [], window.lifecycleSkill)')
+  await until('return !store.activeRun', 'stale skill failure did not finish')
+  assert((await send('check')).includes('same-live-page'))
+  assert.equal(await evaluate('return window.testEvents.at(-1).data.pid'), events[0].data.pid)
+  pass('missing selected skill rejects only the turn without killing the existing browser')
   await evaluate('await store.sendMessage("hang")')
   await until('return store.activeRun?.content.includes("Waiting")', 'hanging turn did not start')
   await evaluate('await store.stopClaude()')
   await until('return !store.activeRun', 'stop did not complete')
   assert((await send('check')).includes('same-live-page'))
   pass('send/stop/send-again retains browser state')
+  await evaluate('await store.sendMessage("hang")')
+  await until('return store.activeRun?.content.includes("Waiting")', 'steer setup did not start')
+  await evaluate('await store.sendMessage("check"); await store.steerQueuedMessage(store.activeConversationId, store.activeQueuedMessages[0].id)')
+  await until('return !store.activeRun && !store.activeQueuedMessages.length', 'steered turn did not finish')
+  assert((await send('check')).includes('same-live-page'))
+  assert.equal(await evaluate('return window.testEvents.at(-1).data.pid'), events[0].data.pid)
+  pass('queued immediate adjustment retains browser and PID')
   await evaluate('await store.newConversation()')
   assert(!(await send('check')).includes('same-live-page'))
   await evaluate('await store.selectConversation(window.firstConversation)')
@@ -123,7 +147,9 @@ try {
   await evaluate('store.settings.permissionMode = "plan"')
   assert(!(await send('check')).includes('same-live-page'))
   assert.notEqual(await evaluate('return window.testEvents.at(-1).data.pid'), beforeChange)
-  pass('changed settings restart the idle session for the next turn')
+  assert(await evaluate('return store.activeMessages.some(m => m.content === "claude-desk:mcp-session:configuration-changed")'))
+  assert((await evaluate('return document.body.textContent')).includes('Claude and MCP need to reconnect'))
+  pass('changed settings restart with a visible persisted explanation')
   const retained = await evaluate('return window.testEvents.at(-1).data.pid')
   for (let index = 0; index < 3; index++) {
     await evaluate('await store.newConversation()')
@@ -132,7 +158,12 @@ try {
   await evaluate('await store.selectConversation(window.firstConversation)')
   await send('tabs')
   assert.notEqual(await evaluate('return window.testEvents.at(-1).data.pid'), retained)
-  pass('idle LRU evicts old sessions after three retained conversations')
+  assert(await evaluate('return store.activeMessages.some(m => m.content === "claude-desk:mcp-session:idle-limit")'))
+  pass('idle LRU releases old sessions with a persisted explanation')
+  await send('exit-idle')
+  await until('return store.activeMessages.some(m => m.content === "claude-desk:mcp-session:connection-ended")', 'unexpected idle exit did not show a notice')
+  await send('tabs')
+  pass('unexpected idle process exit is reported and the next message reconnects')
   const screenshot = await api('GET', `/session/${session}/screenshot`)
   writeFileSync(join(root, 'packaged-app.png'), Buffer.from(screenshot, 'base64'))
   writeFileSync(join(root, 'phase.txt'), 'allow-terminal')

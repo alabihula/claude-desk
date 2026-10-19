@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "claude-desk"
-version = "0.1.58"
+version = "0.1.59"
 dependencies = [
  "chrono",
  "core-foundation",

@@ -58,7 +58,10 @@ input.on('line', async (line) => {
     return
   }
   if (value.type !== 'user') return
-  const prompt = value.message.content.split('\n')[0].trim()
+  const content = value.message.content
+  const prompt = (content.startsWith('Use the reusable skill instructions')
+    ? content.split('\n').find(line => line.startsWith('User request: '))?.slice(14) || ''
+    : content.split('\n')[0]).trim()
   if (prompt.startsWith('/compact')) {
     if (++compactions === 3) {
       send({ type: 'system', subtype: 'status', compact_result: 'failed', compact_error: 'Not enough messages to compact.' })
@@ -72,6 +75,7 @@ input.on('line', async (line) => {
     return
   }
   if (prompt === 'crash') process.exit(7)
+  if (prompt === 'exit-idle') { setTimeout(() => process.exit(7), 500); }
   if (prompt === 'hang') { hanging = true; send({ type: 'assistant', message: { content: [{ type: 'text', text: 'Waiting' }] } }); return }
   try {
     let result = `${++sequence}:${process.pid}:${prompt}`

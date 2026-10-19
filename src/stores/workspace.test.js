@@ -721,6 +721,54 @@ describe('workspace supplemental messages', () => {
     expect(desktop.sendClaude.mock.calls.map(([request]) => request.operation)).toEqual(['chat', 'chat'])
   })
 
+  it('defers stop until compaction launches and does not call the stopped compaction a failure', async () => {
+    const store = setupStore()
+    let launched
+    desktop.sendClaude.mockImplementationOnce(() => new Promise(resolve => { launched = resolve }))
+    const compact = store.compactConversation()
+    await store.stopClaude()
+    expect(desktop.stopClaude).not.toHaveBeenCalled()
+    launched('compact-run')
+    await compact
+    expect(desktop.stopClaude).toHaveBeenCalledWith('conversation-1')
+    store.handleClaudeEvent({ conversationId: 'conversation-1', runId: 'compact-run', kind: 'turn_complete', data: { success: true } })
+    await vi.waitFor(() => expect(store.activeRun).toBeNull())
+    expect(store.activeMessages.some(message => message.content.includes('diagnostic:run-error'))).toBe(false)
+  })
+
+  it('uses the configured default model consistently for chat and manual compaction', async () => {
+    const store = setupStore()
+    store.claudeSettings = { model: 'configured-model' }
+    await store.sendMessage('hello')
+    const chat = desktop.sendClaude.mock.calls.at(-1)[0]
+    delete store.runs['conversation-1']
+    await store.compactConversation()
+    const compact = desktop.sendClaude.mock.calls.at(-1)[0]
+    expect(compact.model).toBe('configured-model')
+    expect(compact.model).toBe(chat.model)
+    expect(compact.effort).toBe(chat.effort)
+  })
+
+  it('uses queued effort for automatic compaction even if the conversation selection changed', async () => {
+    const store = setupStore()
+    store.conversations[0].effort = 'low'
+    store.contextStats['conversation-1'] = { tokens: 195000, window: 200000, measured: true, model: 'queued-model' }
+    store.queuedMessages['conversation-1'] = [{ model: 'queued-model', effort: 'high' }]
+    await store.dispatchNextQueued('conversation-1')
+    expect(desktop.sendClaude).toHaveBeenCalledWith(expect.objectContaining({ operation: 'compact', model: 'queued-model', effort: 'high' }))
+  })
+
+  it('accepts persisted idle-session notices without a run and does not duplicate or mark unloaded history loaded', () => {
+    const store = setupStore()
+    const data = { id: 'notice', conversationId: 'conversation-1', role: 'system', content: 'claude-desk:mcp-session:idle-limit' }
+    const event = { conversationId: 'conversation-1', runId: '', kind: 'session_notice', data }
+    store.handleClaudeEvent(event)
+    store.handleClaudeEvent(event)
+    expect(store.activeMessages.filter(message => message.id === 'notice')).toHaveLength(1)
+    store.handleClaudeEvent({ ...event, conversationId: 'unloaded', data: { ...data, conversationId: 'unloaded' } })
+    expect(store.messages.unloaded).toBeUndefined()
+  })
+
   it('updates context usage after confirmed manual compaction', async () => {
     const store = setupStore()
     store.contextStats['conversation-1'] = {

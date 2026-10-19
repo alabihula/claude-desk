@@ -9,7 +9,7 @@ use std::sync::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{ChildStdin, Command},
-    sync::{mpsc, Mutex},
+    sync::{mpsc, watch, Mutex},
     time::{sleep_until, timeout, Duration, Instant},
 };
 use uuid::Uuid;
@@ -38,6 +38,7 @@ pub struct Session {
     pub input: Input,
     pub control: Arc<McpControl>,
     alive: Arc<AtomicBool>,
+    closed: watch::Receiver<bool>,
     requests: mpsc::Sender<Request>,
 }
 
@@ -68,9 +69,11 @@ impl Session {
         let stdout = child.stdout.take().ok_or("Claude stdout unavailable")?;
         let stderr = child.stderr.take().ok_or("Claude stderr unavailable")?;
         let (requests, mut receiver) = mpsc::channel(8);
+        let (closed_tx, closed) = watch::channel(false);
         let session = Arc::new(Self {
             pid,
             input,
+            closed,
             requests,
             control: Arc::default(),
             alive: Arc::new(AtomicBool::new(true)),
@@ -99,6 +102,7 @@ impl Session {
                     biased;
                     _ = sleep_until(deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(86400))), if deadline.is_some() => {
                         // An unresponsive interrupt/EOF must not strand the conversation or its children.
+                        if !closing { failure = Some("Claude did not acknowledge the interrupt before the timeout".into()); }
                         let _ = platform::kill_process_tree(pid);
                         break child.wait().await;
                     }
@@ -156,6 +160,7 @@ impl Session {
                 }
             };
             alive.store(false, Ordering::Release);
+            let _ = closed_tx.send(true);
             control.close();
             input.lock().await.take();
             if let Some(events) = active {
@@ -173,6 +178,11 @@ impl Session {
             }
         });
         Ok(session)
+    }
+
+    pub async fn closed(&self) {
+        let mut closed = self.closed.clone();
+        let _ = closed.wait_for(|closed| *closed).await;
     }
 
     pub fn is_alive(&self) -> bool {
@@ -338,6 +348,29 @@ mod tests {
             "first browser turn failed: {}",
             first.0
         );
+        let mut compact = session.begin("/compact Preserve the open Playwright page and its in-memory test value. Do not call browser_close.".into()).unwrap();
+        let confirmed = timeout(Duration::from_secs(90), async {
+            let mut confirmed = false;
+            while let Some(event) = compact.recv().await {
+                match event {
+                    Event::Stdout(line) => {
+                        let value: Value = serde_json::from_str(&line).unwrap();
+                        confirmed |= value["subtype"] == "compact_boundary"
+                            || value["compact_result"] == "success";
+                    }
+                    Event::Complete => return confirmed,
+                    Event::Exit { .. } => return false,
+                    Event::Stderr(_) => {}
+                }
+            }
+            false
+        })
+        .await
+        .unwrap();
+        assert!(
+            confirmed && session.is_alive(),
+            "compaction did not complete on the live transport"
+        );
         let second = collect(session.begin("Use Playwright MCP browser_evaluate to read window.claudeDeskNonce from the existing page, without navigation. Reply only with its value. Do not close the browser.".into()).unwrap()).await;
         assert!(
             second.1 && second.0.contains("same-live-page"),
@@ -362,6 +395,13 @@ mod tests {
             .await
             .0
             .contains("same-live-page"));
+        for _ in 0..2 {
+            assert!(collect(first.begin("/compact".into()).unwrap()).await.1);
+            assert!(collect(first.begin("check".into()).unwrap())
+                .await
+                .0
+                .contains("same-live-page"));
+        }
         // A different conversation has a separate browser, without first's in-memory variable.
         assert!(!collect(second.begin("check".into()).unwrap())
             .await

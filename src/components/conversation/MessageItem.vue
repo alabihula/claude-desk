@@ -30,6 +30,10 @@ let fileRequestId = 0
 let messageCopyTimer
 const contextEventTranslations = {
   'claude-desk:media-skipped': 'message.mediaSkipped',
+  'claude-desk:mcp-session:configuration-changed': 'message.mcpConfigurationChanged',
+  'claude-desk:mcp-session:history-recovery': 'message.mcpHistoryRecovery',
+  'claude-desk:mcp-session:connection-ended': 'message.mcpConnectionEnded',
+  'claude-desk:mcp-session:idle-limit': 'message.mcpIdleLimit',
   'claude-desk:media-recovered': 'message.mediaRecovered',
   'Context compacted manually · Full transcript remains available': 'message.compactedManually',
   'Context compacted automatically · Pending message sent afterward': 'message.compactedAutomatically',

@@ -1,5 +1,6 @@
 mod claude;
 mod claude_session;
+mod claude_session_key;
 mod config;
 mod context;
 mod data;

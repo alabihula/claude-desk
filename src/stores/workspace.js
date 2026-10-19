@@ -598,6 +598,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         const outcome = await this.startCompaction(conversationId, 'automatic', {
           model: pending[0].model,
           contextModel: nextModel,
+          effort: pending[0].effort,
         })
         // A failed start must pause the queued message just like a failed
         // compaction run. Only missing history/runtime makes compaction inapplicable.
@@ -647,6 +648,15 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     handleClaudeEvent(payload) {
+      if (payload.kind === 'session_notice') {
+        const message = payload.data
+        const messages = this.messages[payload.conversationId]
+        // Unloaded conversations read the backend-persisted notice on selection.
+        if (message?.role === 'system' && message.conversationId === payload.conversationId
+          && messages && !messages.some((item) => item.id === message.id)) messages.push(message)
+        delete this.mcpRuntimeByConversation[payload.conversationId]
+        return
+      }
       const run = this.runs[payload.conversationId]
       if (!run || run.exitReceived || run.previousRunId === payload.runId || (run.runId && run.runId !== payload.runId)) return
       if (payload.kind === 'permission') {
@@ -762,7 +772,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           run.status = 'error'
           run.error ||= 'Claude exited before completing the response.'
           run.diagnosticKind = 'run-error'
-        } else if (payload.data?.success && run.operation === 'compact' && run.compactResult !== 'success' && run.status !== 'error') {
+        } else if (payload.data?.success && run.operation === 'compact' && run.compactResult !== 'success' && !['stopping', 'error'].includes(run.status)) {
           run.status = 'error'
           run.error = 'Claude did not confirm that context compaction completed.'
           run.diagnosticKind = 'run-error'
@@ -997,16 +1007,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       const project = this.projects.find((item) => item.id === conversation?.projectId)
       const hasHistory = (this.messages[conversationId] || []).some((message) => message.role === 'user')
       if (!conversation || !project || !hasHistory || this.runs[conversation.id]) return 'unavailable'
-      const model = Object.prototype.hasOwnProperty.call(runtime, 'model') ? runtime.model : conversation.model
-      const contextModel = contextModelKey(runtime.contextModel
-        || model
-        || configuredModel(this.claudeSettings, this.settings))
+      // Match the model/effort snapshot used by normal dispatch. An omitted
+      // default model used to restart the CLI (and its MCP children) on /compact.
+      const model = contextModelKey((Object.prototype.hasOwnProperty.call(runtime, 'model')
+        ? runtime.model : conversation.model) || configuredModel(this.claudeSettings, this.settings))
+      const effort = Object.prototype.hasOwnProperty.call(runtime, 'effort') ? runtime.effort : conversation.effort
+      const contextModel = contextModelKey(runtime.contextModel || model)
       this.runs[conversation.id] = newRun(
         'compact',
         this.contextStats[conversation.id],
         compaction,
         contextModel,
       )
+      const run = this.runs[conversation.id]
+      run.launchPending = true
       delete this.mcpRuntimeByConversation[conversation.id]
       try {
         const runId = await desktop.sendClaude({
@@ -1022,16 +1036,22 @@ export const useWorkspaceStore = defineStore('workspace', {
           operation: 'compact',
           contextModel,
           model: model || null,
-          effort: conversation.effort || null,
+          effort: effort || null,
         })
-        if (this.runs[conversation.id]) this.runs[conversation.id].runId = runId
+        if (this.runs[conversation.id] !== run || run.exitReceived) return 'started'
+        run.launchPending = false
+        run.runId = runId
+        if (run.status === 'stopping') await desktop.stopClaude(conversation.id)
+        else if (run.status === 'steering') await desktop.interruptClaude(conversation.id)
         return 'started'
       } catch (error) {
-        this.runs[conversation.id].status = 'error'
-        this.runs[conversation.id].error = String(error)
+        if (this.runs[conversation.id] !== run || run.exitReceived) return 'failed'
+        const steering = run.status === 'steering'
+        run.launchPending = false
+        run.status = run.status === 'stopping' ? 'stopped' : steering ? 'interrupted' : 'error'
+        run.error = String(error)
         this.reportClaudeStartError(error)
-        await this.finalizeRun(conversation.id)
-        delete this.runs[conversation.id]
+        await this.finishRun(conversation.id, steering)
         return 'failed'
       }
     },
